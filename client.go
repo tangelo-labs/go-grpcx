@@ -231,6 +231,9 @@ var clientOptionsParsers = map[string]parserFunc{
 
 		return nil
 	},
+	"pool": func(config *ClientConfig, sc string, _ ...string) error {
+		return nil
+	},
 }
 
 // ClientConfig captures the configuration details for a gRPC client connection.
