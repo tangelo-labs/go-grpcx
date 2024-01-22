@@ -3,6 +3,7 @@ package grpcx
 import (
 	"context"
 	"io"
+	"log"
 	"math/rand"
 	"time"
 
@@ -50,8 +51,10 @@ func (cp *connPool) NewStream(ctx context.Context, desc *grpc.StreamDesc, method
 }
 
 func (cp *connPool) Close() error {
-	for _, conn := range cp.conns {
-		_ = conn.Close()
+	for i, conn := range cp.conns {
+		if err := conn.Close(); err != nil {
+			log.Printf("%s: grpc conn pool warning, failed to close connection %d", err, i)
+		}
 	}
 
 	return nil
