@@ -4,8 +4,6 @@ import (
 	"context"
 	"io"
 	"log"
-	"math/rand"
-	"time"
 
 	"google.golang.org/grpc"
 )
@@ -16,21 +14,25 @@ type ClientConn interface {
 	io.Closer
 }
 
-type connPool struct {
-	conns []*grpc.ClientConn
+type connPoolRoundRobin struct {
+	conns    []*grpc.ClientConn
+	balancer *Balancer[*grpc.ClientConn]
 }
 
 // NewClientConnPool returns a new instance of ClientConn that uses a pool of
-// grpc.ClientConn instances when calling Invoke and NewStream.
+// grpc.ClientConn instances when calling Invoke and NewStream using a round-robin
+// strategy.
+//
+// The returned ClientConn is safe for concurrent use by multiple goroutines.
 func NewClientConnPool(conns ...*grpc.ClientConn) ClientConn {
-	return &connPool{
-		conns: conns,
+	return &connPoolRoundRobin{
+		conns:    conns,
+		balancer: NewBalancer[*grpc.ClientConn](conns...),
 	}
 }
 
-func (cp *connPool) Invoke(ctx context.Context, method string, args interface{}, reply interface{}, opts ...grpc.CallOption) error {
-	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-	err := cp.conns[rnd.Intn(len(cp.conns))].Invoke(ctx, method, args, reply, opts...)
+func (cp *connPoolRoundRobin) Invoke(ctx context.Context, method string, args interface{}, reply interface{}, opts ...grpc.CallOption) error {
+	err := cp.balancer.Next().Invoke(ctx, method, args, reply, opts...)
 
 	if err != nil {
 		return err
@@ -39,9 +41,8 @@ func (cp *connPool) Invoke(ctx context.Context, method string, args interface{},
 	return nil
 }
 
-func (cp *connPool) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-	stream, err := cp.conns[rnd.Intn(len(cp.conns))].NewStream(ctx, desc, method, opts...)
+func (cp *connPoolRoundRobin) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	stream, err := cp.balancer.Next().NewStream(ctx, desc, method, opts...)
 
 	if err != nil {
 		return nil, err
@@ -50,7 +51,7 @@ func (cp *connPool) NewStream(ctx context.Context, desc *grpc.StreamDesc, method
 	return stream, nil
 }
 
-func (cp *connPool) Close() error {
+func (cp *connPoolRoundRobin) Close() error {
 	for i, conn := range cp.conns {
 		if err := conn.Close(); err != nil {
 			log.Printf("%s: grpc conn pool warning, failed to close connection %d", err, i)
