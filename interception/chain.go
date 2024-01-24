@@ -6,9 +6,9 @@ import (
 	"google.golang.org/grpc"
 )
 
-// ChainUnaryServer creates a single interceptor out of a chain of many interceptors.
+// ChainServerUnary creates a single interceptor out of a chain of many interceptors.
 // Execution is done in left-to-right order, including passing of context.
-func ChainUnaryServer(interceptors ...grpc.UnaryServerInterceptor) grpc.UnaryServerInterceptor {
+func ChainServerUnary(interceptors ...grpc.UnaryServerInterceptor) grpc.UnaryServerInterceptor {
 	n := len(interceptors)
 
 	// Basic interceptor to avoid returning nil.
@@ -38,9 +38,9 @@ func ChainUnaryServer(interceptors ...grpc.UnaryServerInterceptor) grpc.UnarySer
 	}
 }
 
-// ChainStreamServer creates a single interceptor out of a chain of many interceptors.
+// ChainServerStream creates a single interceptor out of a chain of many interceptors.
 // Execution is done in left-to-right order, including passing of context.
-func ChainStreamServer(interceptors ...grpc.StreamServerInterceptor) grpc.StreamServerInterceptor {
+func ChainServerStream(interceptors ...grpc.StreamServerInterceptor) grpc.StreamServerInterceptor {
 	n := len(interceptors)
 
 	// Basic interceptor to avoid returning nil.
