@@ -1,6 +1,7 @@
 package grpcx
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -422,6 +423,31 @@ func ParseClientConfig(dsn string) (ClientConfig, error) {
 	}
 
 	return *config, nil
+}
+
+// ParseClientConfigDial convenience function that parses a ClientConfig from a string
+// and returns a clean gRPC connection.
+//
+// If you need to fine-tune the connection, use ParseClientConfig instead and call
+// NewDialer on the returned ClientConfig.
+func ParseClientConfigDial(ctx context.Context, dsn string) (*grpc.ClientConn, error) {
+	config, err := ParseClientConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	return config.NewDialer().Dial(ctx)
+}
+
+// ParseClientConfigDialPool same as ParseClientConfigDial but returns a connection
+// pool instead.
+func ParseClientConfigDialPool(ctx context.Context, dsn string, poolSize int) (ClientConn, error) {
+	config, err := ParseClientConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	return config.NewDialer().DialPool(ctx, 10)
 }
 
 // ParseHostAndPort parses a host and port from a string given in the format:

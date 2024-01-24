@@ -23,19 +23,13 @@ import (
 )
 
 func main() {
-    cfg, err := grpcx.ParseClientConfig(`grpc://example.com:443?tls=true&blocking=true&timeout=10s`)
+	ctx := context.Background()
+    conn, err := grpcx.ParseClientConfigDial(ctx, `grpc://example.com:443?tls=true&blocking=true&timeout=10s`)
     if err != nil {
         panic(err)
     }
     
-    ctx := context.Background()
-    
-    cc, err := cfg.NewDialer().Dial(ctx)
-    if err != nil {
-        panic(err)
-    }
-    
-    // ...
+    // use conn to build a gRPC client.
 }
 ```
 
