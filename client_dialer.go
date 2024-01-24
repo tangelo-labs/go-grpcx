@@ -125,3 +125,24 @@ func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
 
 	return grpc.DialContext(ctx, target, additionalOptions...)
 }
+
+// DialPool dials the backend using the given context and returns a ClientConn
+// implementation that uses a pool of grpc.ClientConn instances when calling "Invoke" and
+// "NewStream".
+//
+// This allows to have multiple connections to the same backend, and distribute the
+// requests between connections.
+func (d *Dialer) DialPool(ctx context.Context, poolSize int) (ClientConn, error) {
+	conns := make([]*grpc.ClientConn, poolSize)
+
+	for i := 0; i < poolSize; i++ {
+		conn, err := d.Dial(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		conns[i] = conn
+	}
+
+	return NewClientConnPool(conns...), nil
+}
