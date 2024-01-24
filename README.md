@@ -1,7 +1,7 @@
 # gRPCx
 
 This package provides a simple set of utilities for common use cases when 
-working with gRPC protocol.
+working with gRPC protocol and protocol buffers.
 
 ## Installation
 
