@@ -447,7 +447,7 @@ func ParseClientConfigDialPool(ctx context.Context, dsn string, poolSize int) (C
 		return nil, err
 	}
 
-	return config.NewDialer().DialPool(ctx, 10)
+	return config.NewDialer().DialPool(ctx, poolSize)
 }
 
 // ParseHostAndPort parses a host and port from a string given in the format:
