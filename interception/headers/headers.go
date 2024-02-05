@@ -2,8 +2,6 @@ package headers
 
 import (
 	"context"
-	"errors"
-	"io"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -34,13 +32,13 @@ func StreamClientInterceptor(headers map[string]string) grpc.StreamClientInterce
 	}
 
 	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-		ctx = metadata.AppendToOutgoingContext(ctx, kvs...)
-		cs, err := cc.NewStream(ctx, desc, method, opts...)
+		mdCtx := metadata.AppendToOutgoingContext(ctx, kvs...)
+		s, err := streamer(mdCtx, desc, cc, method, opts...)
 
-		if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+		if err != nil {
 			return nil, err
 		}
 
-		return cs, err
+		return s, err
 	}
 }
