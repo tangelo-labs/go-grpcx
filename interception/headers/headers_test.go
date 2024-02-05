@@ -47,3 +47,38 @@ func TestUnaryClientInterceptor(t *testing.T) {
 		require.EqualValues(t, v, sentMD.Get(k)[0])
 	}
 }
+
+func TestStreamClientInterceptor(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	stubHeaders := map[string]string{
+		"foo":                     "bar",
+		gofakeit.LoremIpsumWord(): gofakeit.LoremIpsumWord(),
+		gofakeit.LoremIpsumWord(): gofakeit.LoremIpsumWord(),
+		gofakeit.LoremIpsumWord(): gofakeit.LoremIpsumWord(),
+	}
+
+	invokesCalls := counter.NewUnsigned()
+	sentMD := metadata.MD{}
+
+	interceptor := headers.StreamClientInterceptor(stubHeaders)
+	streamer := func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		invokesCalls.Add(1)
+
+		md, _ := metadata.FromOutgoingContext(ctx)
+		sentMD = md
+
+		return nil, nil
+	}
+
+	_, err := interceptor(ctx, nil, nil, "grpc.test.method", streamer)
+
+	require.NoError(t, err)
+	require.EqualValues(t, 1, invokesCalls.Get())
+
+	for k, v := range stubHeaders {
+		require.Contains(t, sentMD, k)
+		require.EqualValues(t, v, sentMD.Get(k)[0])
+	}
+}
