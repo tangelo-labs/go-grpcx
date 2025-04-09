@@ -4,9 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+
 	"github.com/tangelo-labs/go-grpcx/interception/causation"
 	"github.com/tangelo-labs/go-grpcx/interception/correlation"
-
 	"github.com/tangelo-labs/go-grpcx/interception/headers"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -118,14 +118,8 @@ func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
 	}
 
 	if d.cfg.EnableTracing {
-		unaryInterceptors = append(unaryInterceptors,
-			correlation.UnaryClientInterceptor(),
-			causation.UnaryClientInterceptor(),
-		)
-		streamInterceptors = append(streamInterceptors,
-			correlation.StreamClientInterceptor(),
-			causation.StreamClientInterceptor(),
-		)
+		unaryInterceptors = append(unaryInterceptors, correlation.UnaryClientInterceptor(), causation.UnaryClientInterceptor())
+		streamInterceptors = append(streamInterceptors, correlation.StreamClientInterceptor(), causation.StreamClientInterceptor())
 	}
 
 	if len(unaryInterceptors) > 0 {
