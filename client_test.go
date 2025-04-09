@@ -191,6 +191,18 @@ func TestParseClientConfig(t *testing.T) {
 			},
 		},
 		{
+			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s&resolver.scheme=dns&enableTracing=true",
+			want: grpcx.ClientConfig{
+				Host:           "example.com",
+				Port:           443,
+				Insecure:       false,
+				Blocking:       true,
+				Timeout:        10 * time.Second,
+				ResolverScheme: "dns",
+				EnableTracing:  true,
+			},
+		},
+		{
 			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s&resolver.scheme=dns&defaultServiceConfig=lbp-round_robin",
 			want: grpcx.ClientConfig{
 				Host:                 "example.com",

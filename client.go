@@ -207,6 +207,18 @@ var clientOptionsParsers = map[string]parserFunc{
 
 		return nil
 	},
+	"enableTracing": func(config *ClientConfig, enableTracing string, _ ...string) error {
+		b, err := strconv.ParseBool(enableTracing)
+		if err != nil {
+			return fmt.Errorf("%w: invalid enableTracing value, details = %w", ErrInvalidClientConnectionString, err)
+		}
+
+		if b {
+			config.EnableTracing = b
+		}
+
+		return nil
+	},
 	"resolver.scheme": func(config *ClientConfig, scheme string, _ ...string) error {
 		if scheme != "passthrough" && scheme != "dns" && scheme != "unix" {
 			return fmt.Errorf("%w: invalid resolver.scheme value, expecting `passthrough`, `dns` or `unix`, got `%s`", ErrInvalidClientConnectionString, scheme)
@@ -281,6 +293,10 @@ type ClientConfig struct {
 
 	// Blocking makes the client to block when connecting to the server.
 	Blocking bool
+
+	// EnableTracing enables the injection of correlation and causation IDs
+	// via unary and stream interceptors.
+	EnableTracing bool
 
 	// Timeout is the timeout for the connection. This option is only valid when
 	// using a blocking connection.
