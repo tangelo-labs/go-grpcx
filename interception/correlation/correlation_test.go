@@ -11,10 +11,10 @@ import (
 )
 
 func TestUnaryClientInterceptor(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	ctx = metadata.NewOutgoingContext(context.Background(), metadata.Pairs(correlationIDTransportKey, "test-correlation-id"))
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs(correlationIDTransportKey, "test-correlation-id"))
 	interceptor := UnaryClientInterceptor()
 
 	invoker := func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, opts ...grpc.CallOption) error {
@@ -30,13 +30,17 @@ func TestUnaryClientInterceptor(t *testing.T) {
 }
 
 func TestStreamClientInterceptor(t *testing.T) {
-	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs(correlationIDTransportKey, "test-correlation-id"))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs(correlationIDTransportKey, "test-correlation-id"))
 	interceptor := StreamClientInterceptor()
 
 	streamer := func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 		cID, ok := ctx.Value(correlationKey).(string)
 		require.True(t, ok)
 		require.Equal(t, "test-correlation-id", cID)
+
 		return nil, nil
 	}
 
@@ -45,21 +49,24 @@ func TestStreamClientInterceptor(t *testing.T) {
 }
 
 func TestFromContextMetadata(t *testing.T) {
-	t.Run("Valid Metadata", func(t *testing.T) {
-		ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(correlationIDTransportKey, "test-correlation-id"))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	t.Run("valid metadata", func(t *testing.T) {
+		ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(correlationIDTransportKey, "test-correlation-id"))
 		cID, err := fromContextMetadata(ctx)
 		require.NoError(t, err)
 		require.Equal(t, "test-correlation-id", cID)
 	})
 
-	t.Run("Missing Metadata", func(t *testing.T) {
-		ctx := context.Background()
+	t.Run("missing metadata", func(t *testing.T) {
+		ctx = context.Background()
 		_, err := fromContextMetadata(ctx)
 		require.Error(t, err)
 	})
 
-	t.Run("Invalid Metadata", func(t *testing.T) {
-		ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+	t.Run("invalid metadata", func(t *testing.T) {
+		ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(
 			correlationIDTransportKey, "id-one",
 			correlationIDTransportKey, "id2-two",
 		))
