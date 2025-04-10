@@ -117,7 +117,7 @@ func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
 		streamInterceptors = append(streamInterceptors, headers.StreamClientInterceptor(d.cfg.Headers))
 	}
 
-	if d.cfg.EnableTracing {
+	if d.cfg.Tracking {
 		unaryInterceptors = append(unaryInterceptors, correlation.UnaryClientInterceptor(), causation.UnaryClientInterceptor())
 		streamInterceptors = append(streamInterceptors, correlation.StreamClientInterceptor(), causation.StreamClientInterceptor())
 	}

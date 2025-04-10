@@ -207,14 +207,14 @@ var clientOptionsParsers = map[string]parserFunc{
 
 		return nil
 	},
-	"enableTracing": func(config *ClientConfig, enableTracing string, _ ...string) error {
+	"tracking": func(config *ClientConfig, enableTracing string, _ ...string) error {
 		b, err := strconv.ParseBool(enableTracing)
 		if err != nil {
-			return fmt.Errorf("%w: invalid enableTracing value, details = %w", ErrInvalidClientConnectionString, err)
+			return fmt.Errorf("%w: invalid tracking value, details = %w", ErrInvalidClientConnectionString, err)
 		}
 
 		if b {
-			config.EnableTracing = b
+			config.Tracking = b
 		}
 
 		return nil
@@ -294,9 +294,9 @@ type ClientConfig struct {
 	// Blocking makes the client to block when connecting to the server.
 	Blocking bool
 
-	// EnableTracing enables the injection of correlation and causation IDs
+	// Tracking enables the injection of correlation and causation IDs
 	// via unary and stream interceptors.
-	EnableTracing bool
+	Tracking bool
 
 	// Timeout is the timeout for the connection. This option is only valid when
 	// using a blocking connection.
