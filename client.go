@@ -207,8 +207,8 @@ var clientOptionsParsers = map[string]parserFunc{
 
 		return nil
 	},
-	"tracking": func(config *ClientConfig, enableTracing string, _ ...string) error {
-		b, err := strconv.ParseBool(enableTracing)
+	"tracking": func(config *ClientConfig, tracking string, _ ...string) error {
+		b, err := strconv.ParseBool(tracking)
 		if err != nil {
 			return fmt.Errorf("%w: invalid tracking value, details = %w", ErrInvalidClientConnectionString, err)
 		}
