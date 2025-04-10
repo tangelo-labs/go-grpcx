@@ -213,9 +213,7 @@ var clientOptionsParsers = map[string]parserFunc{
 			return fmt.Errorf("%w: invalid tracking value, details = %w", ErrInvalidClientConnectionString, err)
 		}
 
-		if b {
-			config.Tracking = b
-		}
+		config.Tracking = b
 
 		return nil
 	},
