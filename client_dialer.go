@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/tangelo-labs/go-grpcx/interception/headers"
+	"github.com/tangelo-labs/go-grpcx/interception/metadata"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -113,6 +114,16 @@ func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
 	if len(d.cfg.Headers) > 0 {
 		unaryInterceptors = append(unaryInterceptors, headers.UnaryClientInterceptor(d.cfg.Headers))
 		streamInterceptors = append(streamInterceptors, headers.StreamClientInterceptor(d.cfg.Headers))
+	}
+
+	if d.cfg.CorrelationKey != "" {
+		unaryInterceptors = append(unaryInterceptors, metadata.UnaryClientInterceptor(d.cfg.CorrelationKey))
+		streamInterceptors = append(streamInterceptors, metadata.StreamClientInterceptor(d.cfg.CorrelationKey))
+	}
+
+	if d.cfg.CausationKey != "" {
+		unaryInterceptors = append(unaryInterceptors, metadata.UnaryClientInterceptor(d.cfg.CausationKey))
+		streamInterceptors = append(streamInterceptors, metadata.StreamClientInterceptor(d.cfg.CausationKey))
 	}
 
 	if len(unaryInterceptors) > 0 {

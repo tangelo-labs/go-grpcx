@@ -207,6 +207,24 @@ var clientOptionsParsers = map[string]parserFunc{
 
 		return nil
 	},
+	"correlationKey": func(config *ClientConfig, key string, _ ...string) error {
+		if key == "" {
+			return fmt.Errorf("%w: correlationKey cannot be empty", ErrInvalidClientConnectionString)
+		}
+
+		config.CorrelationKey = key
+
+		return nil
+	},
+	"causationKey": func(config *ClientConfig, key string, _ ...string) error {
+		if key == "" {
+			return fmt.Errorf("%w: causationKey cannot be empty", ErrInvalidClientConnectionString)
+		}
+
+		config.CausationKey = key
+
+		return nil
+	},
 	"resolver.scheme": func(config *ClientConfig, scheme string, _ ...string) error {
 		if scheme != "passthrough" && scheme != "dns" && scheme != "unix" {
 			return fmt.Errorf("%w: invalid resolver.scheme value, expecting `passthrough`, `dns` or `unix`, got `%s`", ErrInvalidClientConnectionString, scheme)
@@ -281,6 +299,12 @@ type ClientConfig struct {
 
 	// Blocking makes the client to block when connecting to the server.
 	Blocking bool
+
+	// CorrelationKey is the key used to track the correlation id in the metadata.
+	CorrelationKey string
+
+	// CausationKey is the key used to track the causation id in the metadata.
+	CausationKey string
 
 	// Timeout is the timeout for the connection. This option is only valid when
 	// using a blocking connection.
