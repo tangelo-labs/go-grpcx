@@ -17,7 +17,7 @@ func TestUnaryClientInterceptor(t *testing.T) {
 	key := "x-correlation-id"
 	value := "test-correlation-id"
 
-	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs(key, value))
+	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(key, value))
 	interceptor := UnaryClientInterceptor(key)
 
 	invoker := func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, opts ...grpc.CallOption) error {
@@ -42,7 +42,7 @@ func TestStreamClientInterceptor(t *testing.T) {
 	key := "x-correlation-id"
 	value := "test-correlation-id"
 
-	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs(key, value))
+	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(key, value))
 	interceptor := StreamClientInterceptor(key)
 
 	streamer := func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
