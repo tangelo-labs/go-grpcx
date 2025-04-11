@@ -191,7 +191,7 @@ func TestParseClientConfig(t *testing.T) {
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s&resolver.scheme=dns&tracking=true",
+			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s&resolver.scheme=dns&correlationKey=x-correlation-id",
 			want: grpcx.ClientConfig{
 				Host:           "example.com",
 				Port:           443,
@@ -199,7 +199,7 @@ func TestParseClientConfig(t *testing.T) {
 				Blocking:       true,
 				Timeout:        10 * time.Second,
 				ResolverScheme: "dns",
-				Tracking:       true,
+				CorrelationKey: "x-correlation-id",
 			},
 		},
 		{
