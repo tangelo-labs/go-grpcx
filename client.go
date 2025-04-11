@@ -207,13 +207,21 @@ var clientOptionsParsers = map[string]parserFunc{
 
 		return nil
 	},
-	"tracking": func(config *ClientConfig, tracking string, _ ...string) error {
-		b, err := strconv.ParseBool(tracking)
-		if err != nil {
-			return fmt.Errorf("%w: invalid tracking value, details = %w", ErrInvalidClientConnectionString, err)
+	"correlationKey": func(config *ClientConfig, key string, _ ...string) error {
+		if key == "" {
+			return fmt.Errorf("%w: correlationKey cannot be empty", ErrInvalidClientConnectionString)
 		}
 
-		config.Tracking = b
+		config.CorrelationKey = key
+
+		return nil
+	},
+	"causationKey": func(config *ClientConfig, key string, _ ...string) error {
+		if key == "" {
+			return fmt.Errorf("%w: causationKey cannot be empty", ErrInvalidClientConnectionString)
+		}
+
+		config.CausationKey = key
 
 		return nil
 	},
@@ -292,9 +300,11 @@ type ClientConfig struct {
 	// Blocking makes the client to block when connecting to the server.
 	Blocking bool
 
-	// Tracking enables the injection of correlation and causation IDs
-	// via unary and stream interceptors.
-	Tracking bool
+	// CorrelationKey is the key used to track the correlation id in the metadata.
+	CorrelationKey string
+
+	// CausationKey is the key used to track the causation id in the metadata.
+	CausationKey string
 
 	// Timeout is the timeout for the connection. This option is only valid when
 	// using a blocking connection.
