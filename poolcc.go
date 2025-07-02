@@ -121,7 +121,8 @@ type connPoolRoundRobin struct {
 	balancer *Balancer[*clientConn]
 	bmu      sync.Mutex
 
-	closed atomic.Bool
+	closed      atomic.Bool
+	closeSignal chan struct{}
 }
 
 // NewClientConnPool returns a new instance of ClientConn that uses a pool of
@@ -142,9 +143,10 @@ func NewClientConnPool(dialer DialerFunc, o ...PoolOption) (ClientConn, error) {
 	}
 
 	pool := &connPoolRoundRobin{
-		dialer: dialer,
-		opts:   opts,
-		closed: atomic.Bool{},
+		dialer:      dialer,
+		opts:        opts,
+		closed:      atomic.Bool{},
+		closeSignal: make(chan struct{}),
 	}
 
 	conns := make(chan *clientConn, opts.poolSize)
@@ -181,8 +183,8 @@ func NewClientConnPool(dialer DialerFunc, o ...PoolOption) (ClientConn, error) {
 	return pool, nil
 }
 
-func (cp *connPoolRoundRobin) Invoke(ctx context.Context, method string, args interface{}, reply interface{}, opts ...grpc.CallOption) error {
-	conn, err := cp.get()
+func (pool *connPoolRoundRobin) Invoke(ctx context.Context, method string, args interface{}, reply interface{}, opts ...grpc.CallOption) error {
+	conn, err := pool.get()
 	if err != nil {
 		return fmt.Errorf("%w: failed to get a connection from the pool", err)
 	}
@@ -194,8 +196,8 @@ func (cp *connPoolRoundRobin) Invoke(ctx context.Context, method string, args in
 	return nil
 }
 
-func (cp *connPoolRoundRobin) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-	conn, err := cp.get()
+func (pool *connPoolRoundRobin) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	conn, err := pool.get()
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to get a connection from the pool", err)
 	}
@@ -208,12 +210,12 @@ func (cp *connPoolRoundRobin) NewStream(ctx context.Context, desc *grpc.StreamDe
 	return stream, nil
 }
 
-func (cp *connPoolRoundRobin) GetState() connectivity.State {
-	if cp.closed.Load() {
+func (pool *connPoolRoundRobin) GetState() connectivity.State {
+	if pool.closed.Load() {
 		return connectivity.Shutdown
 	}
 
-	conn := cp.balancer.Next()
+	conn := pool.balancer.Next()
 	if conn == nil {
 		return connectivity.Idle
 	}
@@ -221,28 +223,28 @@ func (cp *connPoolRoundRobin) GetState() connectivity.State {
 	return conn.cc.GetState()
 }
 
-func (cp *connPoolRoundRobin) Close() error {
-	if !cp.closed.CompareAndSwap(false, true) {
+func (pool *connPoolRoundRobin) Close() error {
+	if !pool.closed.CompareAndSwap(false, true) {
 		return ErrClientConnPoolClosed
 	}
 
-	cp.bmu.Lock()
-	defer cp.bmu.Unlock()
+	pool.bmu.Lock()
+	defer pool.bmu.Unlock()
 
-	start := cp.balancer.Next()
+	start := pool.balancer.Next()
 	if err := start.cc.Close(); err != nil {
 		log.Printf("%s: grpc conn pool warning, failed to close connection %s", err, start.id)
 	}
 
 	var wg sync.WaitGroup
 
-	for i := 0; i < cp.balancer.Size(); i++ {
+	for i := 0; i < pool.balancer.Size(); i++ {
 		wg.Add(1)
 
 		go func() {
 			defer wg.Done()
 
-			conn := cp.balancer.Next()
+			conn := pool.balancer.Next()
 			if start.id == conn.id {
 				return
 			}
@@ -255,17 +257,18 @@ func (cp *connPoolRoundRobin) Close() error {
 
 	wg.Wait()
 
-	cp.balancer = nil
+	pool.balancer = nil
+	close(pool.closeSignal)
 
 	return nil
 }
 
-func (cp *connPoolRoundRobin) get() (*clientConn, error) {
-	if cp.closed.Load() {
+func (pool *connPoolRoundRobin) get() (*clientConn, error) {
+	if pool.closed.Load() {
 		return nil, ErrClientConnPoolClosed
 	}
 
-	conn := cp.balancer.Next()
+	conn := pool.balancer.Next()
 
 	// if current connection is unhealthy, serve the RPC from next available healthy connection
 	if !conn.isHealthy() {
@@ -273,7 +276,7 @@ func (cp *connPoolRoundRobin) get() (*clientConn, error) {
 		startID := conn.id
 
 		for {
-			next := cp.balancer.Next()
+			next := pool.balancer.Next()
 			if startID == next.id {
 				break
 			}
@@ -287,7 +290,7 @@ func (cp *connPoolRoundRobin) get() (*clientConn, error) {
 		}
 
 		if !newHealthyFound {
-			if err := cp.refresh(conn); err != nil {
+			if err := pool.refresh(conn); err != nil {
 				return nil, fmt.Errorf("%w: failed to refresh connection", err)
 			}
 		}
@@ -296,11 +299,11 @@ func (cp *connPoolRoundRobin) get() (*clientConn, error) {
 	return conn, nil
 }
 
-func (cp *connPoolRoundRobin) refresh(conn *clientConn) error {
-	ctx, cancel := context.WithTimeout(context.Background(), cp.opts.dialTimeout)
+func (pool *connPoolRoundRobin) refresh(conn *clientConn) error {
+	ctx, cancel := context.WithTimeout(context.Background(), pool.opts.dialTimeout)
 	defer cancel()
 
-	newCC, err := cp.dialer(ctx)
+	newCC, err := pool.dialer(ctx)
 	if err != nil {
 		return err
 	}
@@ -322,27 +325,69 @@ func (cp *connPoolRoundRobin) refresh(conn *clientConn) error {
 	conn.cc = newCC
 	conn.createdAt = time.Now()
 
-	if l := cp.opts.computeConnLifetime(); l > 0 {
+	if l := pool.opts.computeConnLifetime(); l > 0 {
 		conn.setDeadline(time.Now().Add(l))
 	}
 
 	return nil
 }
 
-func (cp *connPoolRoundRobin) dial() (*clientConn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), cp.opts.dialTimeout)
+func (pool *connPoolRoundRobin) dial() (*clientConn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), pool.opts.dialTimeout)
 	defer cancel()
 
-	conn, err := cp.dialer(ctx)
+	conn, err := pool.dialer(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	w := wrapToClientConn(conn)
 
-	if l := cp.opts.computeConnLifetime(); l > 0 {
+	if l := pool.opts.computeConnLifetime(); l > 0 {
 		w.setDeadline(time.Now().Add(l))
 	}
 
 	return w, nil
+}
+
+func (pool *connPoolRoundRobin) refresher() {
+	ticker := time.NewTicker(time.Minute)
+
+	for {
+		select {
+		case <-ticker.C:
+			pool.bmu.Lock()
+
+			unhealthy := make([]*clientConn, 0)
+
+			for i := 0; i < pool.balancer.Size(); i++ {
+				if conn := pool.balancer.Next(); !conn.isHealthy() {
+					unhealthy = append(unhealthy, conn)
+				}
+			}
+
+			var wg sync.WaitGroup
+
+			for _, conn := range unhealthy {
+				wg.Add(1)
+
+				go func(c *clientConn) {
+					defer wg.Done()
+
+					if err := pool.refresh(c); err != nil {
+						log.Printf("%s: grpc conn pool warning, failed to refresh connection %s", err, c.id)
+					}
+				}(conn)
+			}
+
+			wg.Wait()
+
+			pool.bmu.Unlock()
+
+		case <-pool.closeSignal:
+			ticker.Stop()
+
+			return
+		}
+	}
 }
