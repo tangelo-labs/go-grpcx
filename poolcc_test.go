@@ -21,9 +21,11 @@ func TestNewClientConnPool_Basic(t *testing.T) {
 		On("GetState").Return(connectivity.Ready).
 		On("Invoke", ctx, "/hello.world", nil, nil, mock.Anything).Return(nil)
 
-	pool, err := grpcx.NewClientConnPool(func(context.Context) (grpcx.ClientConn, error) {
-		return cc, nil
-	})
+	pool, err := grpcx.NewClientConnPool(
+		grpcx.PoolDialerFunc(func(context.Context) (grpcx.ClientConn, error) {
+			return cc, nil
+		}),
+	)
 
 	require.NoError(t, err)
 	require.NotNil(t, pool)
@@ -45,19 +47,35 @@ func TestNewClientConnPool_Reconnect(t *testing.T) {
 		On("Close").Maybe().Return(nil).
 		On("Invoke", ctx, "/hello.world", nil, nil, mock.Anything).Return(nil)
 
-	pool, err := grpcx.NewClientConnPool(func(context.Context) (grpcx.ClientConn, error) {
-		return cc, nil
-	})
+	mpd := &mockPoolDialer{}
+	mpd.On("Dial", mock.Anything).Return(cc, nil)
+
+	pool, err := grpcx.NewClientConnPool(mpd)
 
 	require.NoError(t, err)
 	err = pool.Invoke(ctx, "/hello.world", nil, nil)
 	require.NoError(t, err)
 
 	cc.AssertExpectations(t)
+	mpd.AssertExpectations(t)
+}
+
+type mockPoolDialer struct {
+	mock.Mock
+
+	grpcx.PoolDialer
+}
+
+func (m *mockPoolDialer) Dial(ctx context.Context) (grpcx.ClientConn, error) {
+	args := m.Called(ctx)
+
+	return args.Get(0).(grpcx.ClientConn), args.Error(1)
 }
 
 type mockCC struct {
 	mock.Mock
+
+	grpcx.ClientConn
 }
 
 func (f *mockCC) GetState() connectivity.State {

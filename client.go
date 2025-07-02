@@ -476,7 +476,7 @@ func ParseClientConfigDialPool(ctx context.Context, dsn string, opts ...PoolOpti
 	}
 
 	dialer := config.NewDialer()
-	fn := DialerFunc(func(ctx context.Context) (ClientConn, error) {
+	fn := PoolDialerFunc(func(ctx context.Context) (ClientConn, error) {
 		return dialer.Dial(ctx)
 	})
 

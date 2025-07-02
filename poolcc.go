@@ -20,8 +20,18 @@ import (
 // PoolOption is a function that modifies the pool options.
 type PoolOption func(*poolOptions)
 
-// DialerFunc is a function type that defines how to create a new gRPC client connection.
-type DialerFunc func(ctx context.Context) (ClientConn, error)
+// PoolDialer is responsible for creating a new connection for the pool.
+type PoolDialer interface {
+	Dial(context.Context) (ClientConn, error)
+}
+
+// PoolDialerFunc is a function type that implements the PoolDialer interface.
+type PoolDialerFunc func(context.Context) (ClientConn, error)
+
+// Dial implements the PoolDialer interface for PoolDialerFunc.
+func (p PoolDialerFunc) Dial(ctx context.Context) (ClientConn, error) {
+	return p(ctx)
+}
 
 type poolOptions struct {
 	poolSize     int
@@ -116,7 +126,7 @@ type ClientConn interface {
 
 type connPoolRoundRobin struct {
 	opts   *poolOptions
-	dialer DialerFunc
+	dialer PoolDialer
 
 	balancer *Balancer[*clientConn]
 	bmu      sync.Mutex
@@ -130,7 +140,7 @@ type connPoolRoundRobin struct {
 // dialer and options.
 //
 // The pool size is determined by the WithPoolSize option.
-func NewClientConnPool(dialer DialerFunc, o ...PoolOption) (ClientConn, error) {
+func NewClientConnPool(dialer PoolDialer, o ...PoolOption) (ClientConn, error) {
 	opts := &poolOptions{
 		poolSize:     10,
 		dialTimeout:  time.Minute,
@@ -295,7 +305,7 @@ func (pool *connPoolRoundRobin) refresh(conn *clientConn) error {
 	ctx, cancel := context.WithTimeout(context.Background(), pool.opts.dialTimeout)
 	defer cancel()
 
-	newCC, err := pool.dialer(ctx)
+	newCC, err := pool.dialer.Dial(ctx)
 	if err != nil {
 		return err
 	}
@@ -328,7 +338,7 @@ func (pool *connPoolRoundRobin) dial() (*clientConn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), pool.opts.dialTimeout)
 	defer cancel()
 
-	conn, err := pool.dialer(ctx)
+	conn, err := pool.dialer.Dial(ctx)
 	if err != nil {
 		return nil, err
 	}
