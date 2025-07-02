@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log"
 
 	"github.com/tangelo-labs/go-grpcx/interception/headers"
 	"github.com/tangelo-labs/go-grpcx/interception/metadata"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
@@ -70,15 +72,8 @@ func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
 		additionalOptions = append(additionalOptions, grpc.WithTransportCredentials(cred))
 	}
 
-	if d.cfg.Blocking {
-		additionalOptions = append(additionalOptions, grpc.WithBlock())
-
-		if d.cfg.Timeout > 0 {
-			c, cancel := context.WithTimeout(ctx, d.cfg.Timeout)
-			defer cancel()
-
-			ctx = c
-		}
+	if d.cfg.Blocking || d.cfg.Timeout > 0 {
+		log.Printf("[WARN] gRPC Dialing using blocking or timeout  options is deprecated, see: https://github.com/grpc/grpc-go/blob/master/Documentation/anti-patterns.md#the-wrong-way-grpcdial")
 	}
 
 	if d.cfg.Authority != "" {
@@ -134,5 +129,27 @@ func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
 		additionalOptions = append(additionalOptions, grpc.WithChainStreamInterceptor(streamInterceptors...))
 	}
 
-	return grpc.DialContext(ctx, target, additionalOptions...)
+	conn, err := grpc.NewClient(target, additionalOptions...)
+	if err != nil {
+		return nil, err
+	}
+
+	if d.cfg.Blocking {
+		if conn.GetState() == connectivity.Idle {
+			if d.cfg.Timeout > 0 {
+				c, cancel := context.WithTimeout(ctx, d.cfg.Timeout)
+				defer cancel()
+
+				ctx = c
+			}
+
+			conn.Connect()
+
+			if !conn.WaitForStateChange(ctx, connectivity.Ready) {
+				return nil, fmt.Errorf("failed to connect to `%s`", target)
+			}
+		}
+	}
+
+	return conn, nil
 }

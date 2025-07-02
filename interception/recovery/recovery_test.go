@@ -66,7 +66,7 @@ func TestUnaryServerInterceptor(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	cc, err := grpc.DialContext(ctx, port.String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	cc, err := grpc.NewClient(port.String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 
 	require.NotPanics(t, func() {
