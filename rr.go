@@ -37,11 +37,6 @@ func (b *Balancer[T]) Next() T {
 	return b.items[key]
 }
 
-// Size returns the number of items in the Balancer.
-func (b *Balancer[T]) Size() int {
-	return len(b.items)
-}
-
 // Reset resets the Balancer to its initial state.
 func (b *Balancer[T]) Reset() {
 	b.idx.Store(0)

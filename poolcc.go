@@ -180,6 +180,8 @@ func NewClientConnPool(dialer DialerFunc, o ...PoolOption) (ClientConn, error) {
 
 	pool.balancer = NewBalancer(wraps...)
 
+	go pool.refresher()
+
 	return pool, nil
 }
 
@@ -231,28 +233,18 @@ func (pool *connPoolRoundRobin) Close() error {
 	pool.bmu.Lock()
 	defer pool.bmu.Unlock()
 
-	start := pool.balancer.Next()
-	if err := start.cc.Close(); err != nil {
-		log.Printf("%s: grpc conn pool warning, failed to close connection %s", err, start.id)
-	}
-
 	var wg sync.WaitGroup
 
-	for i := 0; i < pool.balancer.Size(); i++ {
+	for i := 0; i < len(pool.balancer.items); i++ {
 		wg.Add(1)
 
-		go func() {
+		go func(conn *clientConn) {
 			defer wg.Done()
-
-			conn := pool.balancer.Next()
-			if start.id == conn.id {
-				return
-			}
 
 			if err := conn.cc.Close(); err != nil {
 				log.Printf("%s: grpc conn pool warning, failed to close connection %s", err, conn.id)
 			}
-		}()
+		}(pool.balancer.items[i])
 	}
 
 	wg.Wait()
@@ -360,9 +352,9 @@ func (pool *connPoolRoundRobin) refresher() {
 
 			unhealthy := make([]*clientConn, 0)
 
-			for i := 0; i < pool.balancer.Size(); i++ {
-				if conn := pool.balancer.Next(); !conn.isHealthy() {
-					unhealthy = append(unhealthy, conn)
+			for i := 0; i < len(pool.balancer.items); i++ {
+				if !pool.balancer.items[i].isHealthy() {
+					unhealthy = append(unhealthy, pool.balancer.items[i])
 				}
 			}
 
