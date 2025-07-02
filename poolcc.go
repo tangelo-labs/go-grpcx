@@ -11,12 +11,17 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hashicorp/go-multierror"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 )
 
+// PoolOption is a function that modifies the pool options.
 type PoolOption func(*poolOptions)
+
+// DialerFunc is a function type that defines how to create a new gRPC client connection.
+type DialerFunc func(ctx context.Context) (ClientConn, error)
 
 type poolOptions struct {
 	poolSize     int
@@ -25,58 +30,73 @@ type poolOptions struct {
 	jitter       time.Duration
 }
 
-// connLifeTimeout returns a randomized connection lifetime duration.
-func (o *poolOptions) connLifeTimeout() time.Duration {
+// computeConnLifeTime returns a randomized connection lifetime duration.
+func (o *poolOptions) computeConnLifetime() time.Duration {
+	if o.connLifetime <= 0 {
+		return 0
+	}
+
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())).Float64() + 0.5
 
 	return time.Duration(float64(o.connLifetime) + (rd * float64(o.jitter)))
 }
 
+// WithPoolSize sets the number of connections in the pool.
 func WithPoolSize(size int) PoolOption {
 	return func(o *poolOptions) {
 		o.poolSize = size
 	}
 }
 
+// WithPoolDialTimeout sets the timeout for dialing a new connection.
 func WithPoolDialTimeout(timeout time.Duration) PoolOption {
 	return func(o *poolOptions) {
 		o.dialTimeout = timeout
 	}
 }
 
+// WithPoolConnLifetime sets the lifetime of each connection in the pool.
+// Defaults to 0, which means connections will not be closed automatically.
 func WithPoolConnLifetime(lifetime time.Duration) PoolOption {
 	return func(o *poolOptions) {
 		o.connLifetime = lifetime
 	}
 }
 
+// WithPoolJitter is a random duration used to prevent from all connections
+// being closed at the same time when the connection lifetime is set.
+//
+// This option has no effect if the connection lifetime is not set.
+// Defaults to 10 seconds.
 func WithPoolJitter(jitter time.Duration) PoolOption {
 	return func(o *poolOptions) {
 		o.jitter = jitter
 	}
 }
 
-// ErrConnPoolClosed is returned when the connection pool is closed
+// ErrClientConnPoolClosed is returned when the connection pool is closed
 // and an operation is attempted on it.
-var ErrConnPoolClosed = errors.New("grpc conn pool is closed")
+var ErrClientConnPoolClosed = errors.New("grpc conn pool is closed")
 
 type clientConn struct {
-	cc        *grpc.ClientConn
+	id        string
+	cc        ClientConn
 	createdAt time.Time
 
 	deadline time.Time
 	mu       sync.Mutex
 }
 
-func wrapToClientConn(cc *grpc.ClientConn) *clientConn {
+func wrapToClientConn(cc ClientConn) *clientConn {
 	return &clientConn{
+		id:        uuid.New().String(),
 		cc:        cc,
 		createdAt: time.Now(),
 	}
 }
 
 func (c *clientConn) isHealthy() bool {
-	return c.cc.GetState() == connectivity.Ready && time.Now().Before(c.deadline)
+	return c.cc.GetState() == connectivity.Ready || (!c.deadline.IsZero() && time.Now().Before(c.deadline))
 }
 
 func (c *clientConn) setDeadline(d time.Time) {
@@ -88,15 +108,20 @@ func (c *clientConn) setDeadline(d time.Time) {
 
 // ClientConn is an abstraction for grpc.ClientConn.
 type ClientConn interface {
+	GetState() connectivity.State
+
 	grpc.ClientConnInterface
 	io.Closer
 }
 
 type connPoolRoundRobin struct {
-	opts     *poolOptions
-	dialer   *Dialer
+	opts   *poolOptions
+	dialer DialerFunc
+
 	balancer *Balancer[*clientConn]
-	closed   atomic.Bool
+	bmu      sync.Mutex
+
+	closed atomic.Bool
 }
 
 // NewClientConnPool returns a new instance of ClientConn that uses a pool of
@@ -104,7 +129,7 @@ type connPoolRoundRobin struct {
 // dialer and options.
 //
 // The pool size is determined by the WithPoolSize option.
-func NewClientConnPool(dialer *Dialer, o ...PoolOption) (ClientConn, error) {
+func NewClientConnPool(dialer DialerFunc, o ...PoolOption) (ClientConn, error) {
 	opts := &poolOptions{
 		poolSize:     10,
 		dialTimeout:  time.Minute,
@@ -139,6 +164,7 @@ func NewClientConnPool(dialer *Dialer, o ...PoolOption) (ClientConn, error) {
 	}
 
 	err := g.Wait().ErrorOrNil()
+
 	close(conns)
 
 	if err != nil {
@@ -158,7 +184,7 @@ func NewClientConnPool(dialer *Dialer, o ...PoolOption) (ClientConn, error) {
 func (cp *connPoolRoundRobin) Invoke(ctx context.Context, method string, args interface{}, reply interface{}, opts ...grpc.CallOption) error {
 	conn, err := cp.get()
 	if err != nil {
-		return fmt.Errorf("%w: failed to get a connection", err)
+		return fmt.Errorf("%w: failed to get a connection from the pool", err)
 	}
 
 	if iErr := conn.cc.Invoke(ctx, method, args, reply, opts...); iErr != nil {
@@ -171,7 +197,7 @@ func (cp *connPoolRoundRobin) Invoke(ctx context.Context, method string, args in
 func (cp *connPoolRoundRobin) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	conn, err := cp.get()
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to get a connection", err)
+		return nil, fmt.Errorf("%w: failed to get a connection from the pool", err)
 	}
 
 	stream, err := conn.cc.NewStream(ctx, desc, method, opts...)
@@ -182,40 +208,85 @@ func (cp *connPoolRoundRobin) NewStream(ctx context.Context, desc *grpc.StreamDe
 	return stream, nil
 }
 
+func (cp *connPoolRoundRobin) GetState() connectivity.State {
+	if cp.closed.Load() {
+		return connectivity.Shutdown
+	}
+
+	conn := cp.balancer.Next()
+	if conn == nil {
+		return connectivity.Idle
+	}
+
+	return conn.cc.GetState()
+}
+
 func (cp *connPoolRoundRobin) Close() error {
 	if !cp.closed.CompareAndSwap(false, true) {
-		return ErrConnPoolClosed
+		return ErrClientConnPoolClosed
 	}
 
-	items := cp.balancer.Slice()
+	cp.bmu.Lock()
+	defer cp.bmu.Unlock()
 
-	for i, conn := range items {
-		if err := conn.cc.Close(); err != nil {
-			log.Printf("%s: grpc conn pool warning, failed to close connection %d", err, i)
-		}
+	start := cp.balancer.Next()
+	if err := start.cc.Close(); err != nil {
+		log.Printf("%s: grpc conn pool warning, failed to close connection %s", err, start.id)
 	}
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < cp.balancer.Size(); i++ {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			conn := cp.balancer.Next()
+			if start.id == conn.id {
+				return
+			}
+
+			if err := conn.cc.Close(); err != nil {
+				log.Printf("%s: grpc conn pool warning, failed to close connection %s", err, conn.id)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	cp.balancer = nil
 
 	return nil
 }
 
 func (cp *connPoolRoundRobin) get() (*clientConn, error) {
+	if cp.closed.Load() {
+		return nil, ErrClientConnPoolClosed
+	}
+
 	conn := cp.balancer.Next()
 
 	// if current connection is unhealthy, serve the RPC from next available healthy connection
 	if !conn.isHealthy() {
-		found := false
-		items := cp.balancer.Slice()
+		newHealthyFound := false
+		startID := conn.id
 
-		for i := 0; i < len(items); i++ {
-			if items[i].isHealthy() {
-				conn = items[i]
-				found = true
+		for {
+			next := cp.balancer.Next()
+			if startID == next.id {
+				break
+			}
+
+			if next.isHealthy() {
+				conn = next
+				newHealthyFound = true
 
 				break
 			}
 		}
 
-		if !found {
+		if !newHealthyFound {
 			if err := cp.refresh(conn); err != nil {
 				return nil, fmt.Errorf("%w: failed to refresh connection", err)
 			}
@@ -229,7 +300,7 @@ func (cp *connPoolRoundRobin) refresh(conn *clientConn) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cp.opts.dialTimeout)
 	defer cancel()
 
-	newCC, err := cp.dialer.Dial(ctx)
+	newCC, err := cp.dialer(ctx)
 	if err != nil {
 		return err
 	}
@@ -237,12 +308,23 @@ func (cp *connPoolRoundRobin) refresh(conn *clientConn) error {
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
 
+	// another goroutine might have already refreshed the connection.
+	// we just drop the new connection if the old one is still healthy.
+	if conn.isHealthy() {
+		defer func() { _ = newCC.Close() }()
+
+		return nil
+	}
+
 	// close old connection in a goroutine to avoid blocking
-	go func(cc *grpc.ClientConn) { _ = cc.Close() }(conn.cc)
+	go func(cc ClientConn) { _ = cc.Close() }(conn.cc)
 
 	conn.cc = newCC
 	conn.createdAt = time.Now()
-	conn.setDeadline(time.Now().Add(cp.opts.connLifeTimeout()))
+
+	if l := cp.opts.computeConnLifetime(); l > 0 {
+		conn.setDeadline(time.Now().Add(l))
+	}
 
 	return nil
 }
@@ -251,13 +333,16 @@ func (cp *connPoolRoundRobin) dial() (*clientConn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cp.opts.dialTimeout)
 	defer cancel()
 
-	conn, err := cp.dialer.Dial(ctx)
+	conn, err := cp.dialer(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	w := wrapToClientConn(conn)
-	w.setDeadline(time.Now().Add(cp.opts.connLifeTimeout()))
+
+	if l := cp.opts.computeConnLifetime(); l > 0 {
+		w.setDeadline(time.Now().Add(l))
+	}
 
 	return w, nil
 }

@@ -250,7 +250,7 @@ var clientOptionsParsers = map[string]parserFunc{
 
 		return nil
 	},
-	"pool": func(config *ClientConfig, sc string, _ ...string) error {
+	"pool": func(_ *ClientConfig, _ string, _ ...string) error {
 		return nil
 	},
 }
@@ -471,7 +471,16 @@ func ParseClientConfigDialPool(ctx context.Context, dsn string, opts ...PoolOpti
 		return nil, err
 	}
 
-	return NewClientConnPool(config.NewDialer(), opts...)
+	if dl, ok := ctx.Deadline(); ok {
+		opts = append(opts, WithPoolDialTimeout(time.Until(dl)))
+	}
+
+	dialer := config.NewDialer()
+	fn := DialerFunc(func(ctx context.Context) (ClientConn, error) {
+		return dialer.Dial(ctx)
+	})
+
+	return NewClientConnPool(fn, opts...)
 }
 
 // ParseHostAndPort parses a host and port from a string given in the format:

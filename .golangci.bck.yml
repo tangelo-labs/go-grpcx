@@ -1,4 +1,3 @@
-version: "2"
 run:
   modules-download-mode: readonly
   tests: true
@@ -7,28 +6,43 @@ output:
 linters:
   enable:
     - dupl
+    - errcheck
     - errname
     - errorlint
     - gocritic
     - gocyclo
     - godot
+    - govet
+    - ineffassign
     - misspell
     - nlreturn
     - noctx
     - prealloc
     - revive
     - sqlclosecheck
+    - staticcheck
     - unconvert
+    - unused
     - wastedassign
     - whitespace
     - wsl
   exclusions:
     generated: lax
-    presets:
-      - comments
-      - common-false-positives
-      - legacy
-      - std-error-handling
+    rules:
+      - linters:
+          - dupl
+        path: _test\.go
+      - linters:
+          - govet
+        text: 'copylocks:'
+      - path: (.+)\.go$
+        text: EXC0012
+      - path: (.+)\.go$
+        text: EXC0013
+      - path: (.+)\.go$
+        text: EXC0014
+      - path: (.+)\.go$
+        text: EXC0015
     paths:
       - third_party$
       - builtin$
@@ -36,10 +50,3 @@ linters:
 issues:
   max-same-issues: 0
   new: false
-formatters:
-  exclusions:
-    generated: lax
-    paths:
-      - third_party$
-      - builtin$
-      - examples$

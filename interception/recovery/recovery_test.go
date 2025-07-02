@@ -24,7 +24,7 @@ func TestUnaryServerInterceptor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	recoveryFunc := func(ctx context.Context, p interface{}) error {
+	recoveryFunc := func(_ context.Context, p interface{}) error {
 		assert.NotNil(t, p, "we was expecting a panic, so recover information cannot be nil")
 
 		return fmt.Errorf("%v", p)
@@ -47,8 +47,8 @@ func TestUnaryServerInterceptor(t *testing.T) {
 		Methods: []grpc.MethodDesc{
 			{
 				MethodName: "PanicCall",
-				Handler: func(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-					return interceptor(ctx, nil, nil, func(ctx context.Context, req interface{}) (interface{}, error) {
+				Handler: func(_ interface{}, ctx context.Context, _ func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+					return interceptor(ctx, nil, nil, func(_ context.Context, _ interface{}) (interface{}, error) {
 						endpointCalls.Up()
 
 						panic("panic")
