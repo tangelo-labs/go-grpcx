@@ -465,13 +465,13 @@ func ParseClientConfigDial(ctx context.Context, dsn string) (*grpc.ClientConn, e
 
 // ParseClientConfigDialPool same as ParseClientConfigDial but returns a connection
 // pool instead.
-func ParseClientConfigDialPool(ctx context.Context, dsn string, poolSize int) (ClientConn, error) {
+func ParseClientConfigDialPool(ctx context.Context, dsn string, opts ...PoolOption) (ClientConn, error) {
 	config, err := ParseClientConfig(dsn)
 	if err != nil {
 		return nil, err
 	}
 
-	return config.NewDialer().DialPool(ctx, poolSize)
+	return NewClientConnPool(config.NewDialer(), opts...)
 }
 
 // ParseHostAndPort parses a host and port from a string given in the format:

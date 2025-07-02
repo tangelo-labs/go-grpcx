@@ -1,6 +1,8 @@
 module github.com/tangelo-labs/go-grpcx
 
-go 1.20
+go 1.21
+
+toolchain go1.24.4
 
 require (
 	github.com/Avalanche-io/counter v0.0.0-20180124180526-1336089e985a
@@ -22,6 +24,8 @@ require (
 	github.com/go-playground/validator/v10 v10.17.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/hashicorp/errwrap v1.0.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.6 // indirect
 	github.com/leodido/go-urn v1.2.4 // indirect
