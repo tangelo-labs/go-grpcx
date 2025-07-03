@@ -8,8 +8,8 @@ import (
 // It is guaranteed that two concurrent calls to Balancer.Next will not return the same
 // item, when the slice contains more than one item.
 type Balancer[T any] struct {
-	items []T
 	idx   atomic.Uint64
+	items []T
 }
 
 // NewBalancer creates a new Balancer instance.
@@ -19,7 +19,8 @@ func NewBalancer[T any](items ...T) *Balancer[T] {
 	}
 }
 
-// Current returns the current item in the slice, without advancing the Loadbalancer.
+// Current returns the current item in the slice, without
+// advancing the Balancer.
 func (b *Balancer[T]) Current() T {
 	idx := b.idx.Load()
 	key := idx % uint64(len(b.items))

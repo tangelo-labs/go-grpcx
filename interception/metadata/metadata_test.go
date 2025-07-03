@@ -20,7 +20,7 @@ func TestUnaryClientInterceptor(t *testing.T) {
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(key, value))
 	interceptor := UnaryClientInterceptor(key)
 
-	invoker := func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, opts ...grpc.CallOption) error {
+	invoker := func(ctx context.Context, _ string, _, _ interface{}, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
 		md, ok := metadata.FromOutgoingContext(ctx)
 		require.True(t, ok)
 
@@ -45,7 +45,7 @@ func TestStreamClientInterceptor(t *testing.T) {
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(key, value))
 	interceptor := StreamClientInterceptor(key)
 
-	streamer := func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	streamer := func(ctx context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, _ string, _ ...grpc.CallOption) (grpc.ClientStream, error) {
 		md, ok := metadata.FromOutgoingContext(ctx)
 		require.True(t, ok)
 

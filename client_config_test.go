@@ -11,22 +11,20 @@ import (
 
 func TestParseClientConfig(t *testing.T) {
 	tests := []struct {
-		dsn     string
+		uri     string
 		want    grpcx.ClientConfig
 		wantErr bool
 	}{
 		{
-			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s",
+			uri: "grpc://example.com:443?tls=true",
 			want: grpcx.ClientConfig{
 				Host:     "example.com",
 				Port:     443,
 				Insecure: false,
-				Blocking: true,
-				Timeout:  10 * time.Second,
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=true&tls.skipVerify=true&blocking=true&timeout=10s",
+			uri: "grpc://example.com:443?tls=true&tls.skipVerify=true",
 			want: grpcx.ClientConfig{
 				Host:     "example.com",
 				Port:     443,
@@ -34,32 +32,26 @@ func TestParseClientConfig(t *testing.T) {
 				TLS: &tls.Config{
 					InsecureSkipVerify: true,
 				},
-				Blocking: true,
-				Timeout:  10 * time.Second,
 			},
 		},
 		{
-			dsn: "grpc://:443?",
+			uri: "grpc://:443?",
 			want: grpcx.ClientConfig{
 				Host:     "",
 				Port:     443,
 				Insecure: false,
-				Blocking: true,
-				Timeout:  10 * time.Second,
 			},
 		},
 		{
-			dsn: "grpc://:443?tls=true&blocking=true&timeout=10s",
+			uri: "grpc://:443?tls=true",
 			want: grpcx.ClientConfig{
 				Host:     "",
 				Port:     443,
 				Insecure: false,
-				Blocking: true,
-				Timeout:  10 * time.Second,
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s&authority=example.com&userAgent=grpc-go/1.38.0&maxHeaderListSize=50&keepAlive.interval=11s&keepAlive.timeout=22s",
+			uri: "grpc://example.com:443?tls=true&authority=example.com&userAgent=grpc-go/1.38.0&maxHeaderListSize=50&keepAlive.interval=11s&keepAlive.timeout=22s",
 			want: grpcx.ClientConfig{
 				Host:              "example.com",
 				Port:              443,
@@ -69,67 +61,39 @@ func TestParseClientConfig(t *testing.T) {
 				MaxHeaderListSize: 50,
 				KeepAliveInterval: 11 * time.Second,
 				KeepAliveTimeout:  22 * time.Second,
-				Blocking:          true,
-				Timeout:           10 * time.Second,
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=false&blocking=false",
+			uri: "grpc://example.com:443?tls=false",
 			want: grpcx.ClientConfig{
 				Host:     "example.com",
 				Port:     443,
 				Insecure: true,
-				Blocking: false,
-				Timeout:  10 * time.Second,
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=false&blocking=false&timeout=10s",
+			uri: "grpc://example.com:443?tls=false",
 			want: grpcx.ClientConfig{
 				Host:     "example.com",
 				Port:     443,
 				Insecure: true,
-				Blocking: false,
-				Timeout:  10 * time.Second,
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=false&blocking=false&timeout=10s&timeout=20s",
+			uri: "grpc://example.com:443?tls=false",
 			want: grpcx.ClientConfig{
 				Host:     "example.com",
 				Port:     443,
 				Insecure: true,
-				Blocking: false,
-				Timeout:  10 * time.Second,
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=false&blocking=false&timeout=10s&timeout=20s&timeout=30s",
-			want: grpcx.ClientConfig{
-				Host:     "example.com",
-				Port:     443,
-				Insecure: true,
-				Blocking: false,
-				Timeout:  10 * time.Second,
-			},
-		},
-		{
-			dsn:     "grpc://example.com:443?tls=false&blocking=false&timeout=xxxx",
+			uri:     "grpc://example.com:1212?tls=xxxx",
 			want:    grpcx.ClientConfig{},
 			wantErr: true,
 		},
 		{
-			dsn:     "grpc://example.com:1212?tls=xxxx",
-			want:    grpcx.ClientConfig{},
-			wantErr: true,
-		},
-		{
-			dsn:     "grpc://example.com:5588?blocking=xxxx",
-			want:    grpcx.ClientConfig{},
-			wantErr: true,
-		},
-		{
-			dsn: "grpc://example.com:333?keepAlive.interval=33ms&keepAlive.timeout=200ms",
+			uri: "grpc://example.com:333?keepAlive.interval=33ms&keepAlive.timeout=200ms",
 			want: grpcx.ClientConfig{
 				Host:              "example.com",
 				Port:              333,
@@ -139,22 +103,20 @@ func TestParseClientConfig(t *testing.T) {
 				MaxHeaderListSize: 0,
 				KeepAliveInterval: 33 * time.Millisecond,
 				KeepAliveTimeout:  200 * time.Millisecond,
-				Blocking:          true,
-				Timeout:           10 * time.Second,
 			},
 		},
 		{
-			dsn:     "xxxx://example.com:5588?blocking=xxxx",
+			uri:     "xxxx://example.com:5588?blocking=xxxx",
 			want:    grpcx.ClientConfig{},
 			wantErr: true,
 		},
 		{
-			dsn:     "grpc://example.com:5588?invalidOption=xxxx",
+			uri:     "grpc://example.com:5588?invalidOption=xxxx",
 			want:    grpcx.ClientConfig{},
 			wantErr: true,
 		},
 		{
-			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s&headers=foo:bar&headers=apikey:abc123&headers=no-value:",
+			uri: "grpc://example.com:443?tls=true&headers=foo:bar&headers=apikey:abc123&headers=no-value:",
 			want: grpcx.ClientConfig{
 				Host: "example.com",
 				Headers: map[string]string{
@@ -164,81 +126,125 @@ func TestParseClientConfig(t *testing.T) {
 				},
 				Port:     443,
 				Insecure: false,
-				Blocking: true,
-				Timeout:  10 * time.Second,
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s&resolver.scheme=passthrough",
+			uri: "grpc://example.com:443?tls=true&resolver.scheme=passthrough",
 			want: grpcx.ClientConfig{
 				Host:           "example.com",
 				Port:           443,
 				Insecure:       false,
-				Blocking:       true,
-				Timeout:        10 * time.Second,
 				ResolverScheme: "passthrough",
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s&resolver.scheme=dns",
+			uri: "grpc://example.com:443?tls=true&resolver.scheme=dns",
 			want: grpcx.ClientConfig{
 				Host:           "example.com",
 				Port:           443,
 				Insecure:       false,
-				Blocking:       true,
-				Timeout:        10 * time.Second,
 				ResolverScheme: "dns",
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s&resolver.scheme=dns&correlationKey=x-correlation-id",
+			uri: "grpc://example.com:443?tls=true&resolver.scheme=dns&correlationKey=x-correlation-id",
 			want: grpcx.ClientConfig{
 				Host:           "example.com",
 				Port:           443,
 				Insecure:       false,
-				Blocking:       true,
-				Timeout:        10 * time.Second,
 				ResolverScheme: "dns",
 				CorrelationKey: "x-correlation-id",
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s&resolver.scheme=dns&defaultServiceConfig=lbp-round_robin",
+			uri: "grpc://example.com:443?tls=true&resolver.scheme=dns&defaultServiceConfig=lbp-round_robin",
 			want: grpcx.ClientConfig{
 				Host:                 "example.com",
 				Port:                 443,
 				Insecure:             false,
-				Blocking:             true,
-				Timeout:              10 * time.Second,
 				ResolverScheme:       "dns",
 				DefaultServiceConfig: `{"loadBalancingPolicy":"round_robin"}`,
 			},
 		},
 		{
-			dsn: "grpc://example.com:443?tls=true&blocking=true&timeout=10s&resolver.scheme=dns&defaultServiceConfig=lbp-pick_first",
+			uri: "grpc://example.com:443?tls=true&resolver.scheme=dns&defaultServiceConfig=lbp-pick_first",
 			want: grpcx.ClientConfig{
 				Host:                 "example.com",
 				Port:                 443,
 				Insecure:             false,
-				Blocking:             true,
-				Timeout:              10 * time.Second,
 				ResolverScheme:       "dns",
 				DefaultServiceConfig: `{"loadBalancingPolicy":"pick_first"}`,
+			},
+		},
+		{
+			uri: "grpc://example.com:443?pool.size=10",
+			want: grpcx.ClientConfig{
+				Host:     "example.com",
+				Port:     443,
+				Insecure: true,
+				PoolOptions: []grpcx.PoolOption{
+					grpcx.WithPoolSize(10),
+				},
+			},
+		},
+		{
+			uri: "grpc://example.com:443?pool.size=10&pool.connLifetime=5s",
+			want: grpcx.ClientConfig{
+				Host:     "example.com",
+				Port:     443,
+				Insecure: true,
+				PoolOptions: []grpcx.PoolOption{
+					grpcx.WithPoolSize(10),
+					grpcx.WithPoolConnLifetime(5 * time.Second),
+				},
+			},
+		},
+		{
+			uri: "grpc://example.com:443?pool.size=10&pool.connLifetime=5s&pool.jitter=2m",
+			want: grpcx.ClientConfig{
+				Host:     "example.com",
+				Port:     443,
+				Insecure: true,
+				PoolOptions: []grpcx.PoolOption{
+					grpcx.WithPoolSize(10),
+					grpcx.WithPoolConnLifetime(5 * time.Second),
+					grpcx.WithPoolJitter(2 * time.Minute),
+				},
+			},
+		},
+		{
+			uri: "grpc://example.com:443?pool.size=10&pool.connLifetime=5s&pool.jitter=2m&pool.healthCheckFreq=1m",
+			want: grpcx.ClientConfig{
+				Host:     "example.com",
+				Port:     443,
+				Insecure: true,
+				PoolOptions: []grpcx.PoolOption{
+					grpcx.WithPoolSize(10),
+					grpcx.WithPoolConnLifetime(5 * time.Second),
+					grpcx.WithPoolJitter(2 * time.Minute),
+					grpcx.WithPoolHealthCheckFreq(time.Minute),
+				},
 			},
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.dsn, func(t *testing.T) {
-			got, err := grpcx.ParseClientConfig(tt.dsn)
+		t.Run(tt.uri, func(t *testing.T) {
+			got, err := grpcx.ParseClientConfig(tt.uri)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseClientConfig() error = %v, wantErr %v", err, tt.wantErr)
 
 				return
 			}
 
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ParseClientConfig() got = %v, want %v", got, tt.want)
+			if len(tt.want.PoolOptions) == 0 {
+				if !reflect.DeepEqual(got, tt.want) {
+					t.Errorf("ParseClientConfig() got = %v, want %v", got, tt.want)
+				}
+			}
+
+			if len(tt.want.PoolOptions) > 0 {
+				assertEqualPoolOptions(t, tt.want.PoolOptions, got.PoolOptions)
 			}
 		})
 	}
@@ -273,5 +279,30 @@ func TestParseHostAndPort(t *testing.T) {
 				t.Errorf("ParseHostAndPort() gotPort = %v, want %v", gotPort, tt.wantPort)
 			}
 		})
+	}
+}
+
+func assertEqualPoolOptions(t *testing.T, expected, actual []grpcx.PoolOption) {
+	t.Helper()
+
+	if len(expected) != len(actual) {
+		t.Errorf("PoolOptions length mismatch: actual %d, expected %d", len(actual), len(expected))
+
+		return
+	}
+
+	expectedOptions := &grpcx.PoolOptions{}
+	actualOptions := &grpcx.PoolOptions{}
+
+	for _, opt := range expected {
+		opt(expectedOptions)
+	}
+
+	for _, opt := range actual {
+		opt(actualOptions)
+	}
+
+	if !reflect.DeepEqual(expectedOptions, actualOptions) {
+		t.Errorf("PoolOptions mismatch: actual %v, expected %v", actualOptions, expectedOptions)
 	}
 }

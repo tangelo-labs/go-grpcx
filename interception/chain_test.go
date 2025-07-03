@@ -76,25 +76,25 @@ func TestChainStreamServerServer(t *testing.T) {
 	ctx = context.WithValue(ctx, ctxKey{v: "parent"}, testValue)
 
 	t.Run("it should do nothing when no interceptors provided", func(t *testing.T) {
-		require.NoError(t, interception.ChainServerStream()(nil, &fakeServerStream{}, nil, func(svc interface{}, stream grpc.ServerStream) error { return nil }))
+		require.NoError(t, interception.ChainServerStream()(nil, &fakeServerStream{}, nil, func(_ interface{}, _ grpc.ServerStream) error { return nil }))
 	})
 
 	t.Run("it should chain interceptors", func(t *testing.T) {
-		first := func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		first := func(srv interface{}, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 			ctx = context.WithValue(ctx, ctxKey{v: "first"}, 1)
 			stream = grpcx.ServerStreamWithContext(ctx, stream)
 
 			return handler(srv, stream)
 		}
 
-		second := func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		second := func(srv interface{}, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 			ctx = context.WithValue(ctx, ctxKey{v: "second"}, 1)
 			stream = grpcx.ServerStreamWithContext(ctx, stream)
 
 			return handler(srv, stream)
 		}
 
-		handler := func(svc interface{}, stream grpc.ServerStream) error {
+		handler := func(_ interface{}, _ grpc.ServerStream) error {
 			requireContextValue(ctx, t, ctxKey{v: "parent"}, testValue)
 			requireContextValue(ctx, t, ctxKey{v: "first"}, testValue)
 			requireContextValue(ctx, t, ctxKey{v: "second"}, testValue)
@@ -138,7 +138,7 @@ func (f *fakeServerStream) SendMsg(m interface{}) error {
 	return nil
 }
 
-func (f *fakeServerStream) RecvMsg(m interface{}) error {
+func (f *fakeServerStream) RecvMsg(interface{}) error {
 	if f.recvMessage == nil {
 		return status.Errorf(codes.NotFound, "fakeServerStream has no message, sorry")
 	}

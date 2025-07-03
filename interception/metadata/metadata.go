@@ -8,10 +8,10 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// UnaryClientInterceptor returns a new unary client interceptor that injects the
-// correlation id from the context into the outgoing metadata. If the correlation
-// id is not present in the context, it will be ignored and the request will
-// proceed without it.
+// UnaryClientInterceptor assumes that the incoming context contains metadata
+// and extracts the value for the given key, appending it to the outgoing
+// context. If the key is not present in the incoming metadata, it simply
+// invokes the original invoker without modifying the context.
 func UnaryClientInterceptor(key string) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		md, err := contextMetadata(ctx)

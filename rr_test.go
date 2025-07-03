@@ -12,8 +12,8 @@ func TestBalancer_Next(t *testing.T) {
 	balancer := grpcx.NewBalancer[int](set...)
 
 	for i := 0; i < 10; i++ {
-		if balancer.Next() != set[i%len(set)] {
-			t.Errorf("expected %d, got %d", set[i%len(set)], balancer.Next())
+		if item := balancer.Next(); item != set[i%len(set)] {
+			t.Errorf("expected %d, got %d", set[i%len(set)], item)
 		}
 	}
 }
@@ -40,7 +40,7 @@ func TestBalancer_Next_ThreadSafe(t *testing.T) {
 
 	wg.Wait()
 
-	if lb.Next() != 1337 {
-		t.Errorf("expected %d, got %d", 1337, lb.Next())
+	if item := lb.Next(); item != 1337 {
+		t.Errorf("expected %d, got %d", 1337, item)
 	}
 }

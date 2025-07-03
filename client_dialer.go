@@ -1,7 +1,6 @@
 package grpcx
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 
@@ -42,10 +41,22 @@ func (d *Dialer) WithStreamInterceptors(interceptors ...grpc.StreamClientInterce
 	return d
 }
 
-// Dial dials the backend using the given context and returns a *grpc.ClientConn
-// instance. Note that the context is only used to dial the connection, it is
-// not used to control the connection lifecycle.
-func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
+// Dial dials the backend and returns a ClientConn instance.
+// If the dialer was configured with a connection pool,
+// it will return a pooled connection instance.
+func (d *Dialer) Dial() (ClientConn, error) {
+	if len(d.cfg.PoolOptions) > 0 {
+		fn := PoolDialerFunc(func() (ClientConn, error) {
+			return d.dial()
+		})
+
+		return NewClientConnPool(fn, d.cfg.PoolOptions...)
+	}
+
+	return d.dial()
+}
+
+func (d *Dialer) dial() (*grpc.ClientConn, error) {
 	scheme := ""
 	if d.cfg.ResolverScheme != "" {
 		scheme = fmt.Sprintf("%s:///", d.cfg.ResolverScheme)
@@ -68,17 +79,6 @@ func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
 
 		cred := credentials.NewTLS(tlsCfg)
 		additionalOptions = append(additionalOptions, grpc.WithTransportCredentials(cred))
-	}
-
-	if d.cfg.Blocking {
-		additionalOptions = append(additionalOptions, grpc.WithBlock())
-
-		if d.cfg.Timeout > 0 {
-			c, cancel := context.WithTimeout(ctx, d.cfg.Timeout)
-			defer cancel()
-
-			ctx = c
-		}
 	}
 
 	if d.cfg.Authority != "" {
@@ -134,26 +134,5 @@ func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
 		additionalOptions = append(additionalOptions, grpc.WithChainStreamInterceptor(streamInterceptors...))
 	}
 
-	return grpc.DialContext(ctx, target, additionalOptions...)
-}
-
-// DialPool dials the backend using the given context and returns a ClientConn
-// implementation that uses a pool of grpc.ClientConn instances when calling "Invoke" and
-// "NewStream".
-//
-// This allows to have multiple connections to the same backend, and distribute the
-// requests between connections.
-func (d *Dialer) DialPool(ctx context.Context, poolSize int) (ClientConn, error) {
-	conns := make([]*grpc.ClientConn, poolSize)
-
-	for i := 0; i < poolSize; i++ {
-		conn, err := d.Dial(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		conns[i] = conn
-	}
-
-	return NewClientConnPool(conns...), nil
+	return grpc.NewClient(target, additionalOptions...)
 }
