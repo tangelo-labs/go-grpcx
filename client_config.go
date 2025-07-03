@@ -1,7 +1,6 @@
 package grpcx
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -21,13 +20,13 @@ import (
 // string using the ParseClientConfig function.
 var ErrInvalidClientConnectionString = errors.New("invalid client connection string")
 
-// parserFunc is a function that parses a query-string and alters the given
+// ccParserFunc is a function that parses a query-string and alters the given
 // ClientConfig instance.
-type parserFunc func(config *ClientConfig, firstValue string, allValues ...string) error
+type ccParserFunc func(config *ClientConfig, firstValue string, allValues ...string) error
 
 // clientOptionsParsers list of acceptable options for a client connection
 // string and their respective parsers.
-var clientOptionsParsers = map[string]parserFunc{
+var clientOptionsParsers = map[string]ccParserFunc{
 	"tls": func(config *ClientConfig, tls string, _ ...string) error {
 		b, err := strconv.ParseBool(tls)
 		if err != nil {
@@ -120,26 +119,6 @@ var clientOptionsParsers = map[string]parserFunc{
 
 		return nil
 
-	},
-	"blocking": func(config *ClientConfig, blocking string, _ ...string) error {
-		b, err := strconv.ParseBool(blocking)
-		if err != nil {
-			return fmt.Errorf("%w: invalid blocking value, details = %w", ErrInvalidClientConnectionString, err)
-		}
-
-		config.Blocking = b
-
-		return nil
-	},
-	"timeout": func(config *ClientConfig, timeout string, _ ...string) error {
-		d, err := time.ParseDuration(timeout)
-		if err != nil {
-			return fmt.Errorf("%w: invalid timeout value, details = %w", ErrInvalidClientConnectionString, err)
-		}
-
-		config.Timeout = d
-
-		return nil
 	},
 	"authority": func(config *ClientConfig, authority string, _ ...string) error {
 		if authority == "" {
@@ -250,7 +229,64 @@ var clientOptionsParsers = map[string]parserFunc{
 
 		return nil
 	},
-	"pool": func(_ *ClientConfig, _ string, _ ...string) error {
+	"pool.size": func(config *ClientConfig, size string, _ ...string) error {
+		if size == "" {
+			return fmt.Errorf("%w: pool.size cannot be empty", ErrInvalidClientConnectionString)
+		}
+
+		poolSize, err := strconv.Atoi(size)
+		if err != nil {
+			return fmt.Errorf("%w: invalid pool.size value, details = %w", ErrInvalidClientConnectionString, err)
+		}
+
+		if poolSize <= 0 {
+			return fmt.Errorf("%w: pool.size must be greater than 0, got %d", ErrInvalidClientConnectionString, poolSize)
+		}
+
+		config.PoolOptions = append(config.PoolOptions, WithPoolSize(poolSize))
+
+		return nil
+	},
+	"pool.connLifetime": func(config *ClientConfig, lifetime string, _ ...string) error {
+		if lifetime == "" {
+			return fmt.Errorf("%w: pool.connLifetime cannot be empty", ErrInvalidClientConnectionString)
+		}
+
+		connLifetime, err := time.ParseDuration(lifetime)
+		if err != nil {
+			return fmt.Errorf("%w: invalid pool.connLifetime value, details = %w", ErrInvalidClientConnectionString, err)
+		}
+
+		config.PoolOptions = append(config.PoolOptions, WithPoolConnLifetime(connLifetime))
+
+		return nil
+	},
+	"pool.jitter": func(config *ClientConfig, jitter string, _ ...string) error {
+		if jitter == "" {
+			return fmt.Errorf("%w: pool.jitter cannot be empty", ErrInvalidClientConnectionString)
+		}
+
+		jitterDuration, err := time.ParseDuration(jitter)
+		if err != nil {
+			return fmt.Errorf("%w: invalid pool.jitter value, details = %w", ErrInvalidClientConnectionString, err)
+		}
+
+		config.PoolOptions = append(config.PoolOptions, WithPoolJitter(jitterDuration))
+
+		return nil
+	},
+	"pool.healthCheckFreq": func(config *ClientConfig, freq string, _ ...string) error {
+		if freq == "" {
+			return fmt.Errorf("%w: pool.healthCheckFreq cannot be empty", ErrInvalidClientConnectionString)
+		}
+
+		healthCheckFreq, err := time.ParseDuration(freq)
+		if err != nil {
+			return fmt.Errorf("%w: invalid pool.healthCheckFreq value, details = %w", ErrInvalidClientConnectionString, err)
+		}
+
+		config.PoolOptions = append(config.PoolOptions, WithPoolHealthCheckFreq(healthCheckFreq))
+
 		return nil
 	},
 }
@@ -297,18 +333,11 @@ type ClientConfig struct {
 	// seconds.
 	KeepAliveTimeout time.Duration
 
-	// Blocking makes the client to block when connecting to the server.
-	Blocking bool
-
 	// CorrelationKey is the key used to track the correlation id in the metadata.
 	CorrelationKey string
 
 	// CausationKey is the key used to track the causation id in the metadata.
 	CausationKey string
-
-	// Timeout is the timeout for the connection. This option is only valid when
-	// using a blocking connection.
-	Timeout time.Duration
 
 	// Resolver is the name of the resolver to use. Default is `passthrough` if
 	// not provided.
@@ -331,6 +360,10 @@ type ClientConfig struct {
 	// For more information about service configs, see:
 	// https://github.com/grpc/grpc/blob/master/doc/service_config.md
 	DefaultServiceConfig string
+
+	// PoolOptions is a list of options to be used when creating a connection
+	// pool. If not provided, no connection pool will be created.
+	PoolOptions []PoolOption
 }
 
 // NewDialer builds a Dialer object that can be tweaked before dialing.
@@ -394,20 +427,18 @@ func (cfg ClientConfig) NewDialer() *Dialer {
 //	grpc://:8080?tls=false
 //	grpc://:8080?blocking=false&timeout=5s
 //	grpc://example.com:8080?headers=foo:bar&headers=bar:baz
-func ParseClientConfig(dsn string) (ClientConfig, error) {
+func ParseClientConfig(uri string) (ClientConfig, error) {
 	config := &ClientConfig{
 		Insecure: false,
-		Blocking: true,
-		Timeout:  10 * time.Second,
 	}
 
-	if dsn == "" {
-		return ClientConfig{}, fmt.Errorf("%w: empty dsn", ErrInvalidClientConnectionString)
+	if uri == "" {
+		return ClientConfig{}, fmt.Errorf("%w: empty URI", ErrInvalidClientConnectionString)
 	}
 
-	u, err := url.Parse(dsn)
+	u, err := url.Parse(uri)
 	if err != nil {
-		return ClientConfig{}, fmt.Errorf("%w: invalid dsn, details = %w", ErrInvalidClientConnectionString, err)
+		return ClientConfig{}, fmt.Errorf("%w: invalid URI, details = %w", ErrInvalidClientConnectionString, err)
 	}
 
 	if u.Scheme != "grpc" {
@@ -454,33 +485,13 @@ func ParseClientConfig(dsn string) (ClientConfig, error) {
 //
 // If you need to fine-tune the connection, use ParseClientConfig instead and call
 // NewDialer on the returned ClientConfig.
-func ParseClientConfigDial(ctx context.Context, dsn string) (*grpc.ClientConn, error) {
-	config, err := ParseClientConfig(dsn)
+func ParseClientConfigDial(uri string) (ClientConn, error) {
+	config, err := ParseClientConfig(uri)
 	if err != nil {
 		return nil, err
 	}
 
-	return config.NewDialer().Dial(ctx)
-}
-
-// ParseClientConfigDialPool same as ParseClientConfigDial but returns a connection
-// pool instead.
-func ParseClientConfigDialPool(ctx context.Context, dsn string, opts ...PoolOption) (ClientConn, error) {
-	config, err := ParseClientConfig(dsn)
-	if err != nil {
-		return nil, err
-	}
-
-	if dl, ok := ctx.Deadline(); ok {
-		opts = append(opts, WithPoolDialTimeout(time.Until(dl)))
-	}
-
-	dialer := config.NewDialer()
-	fn := PoolDialerFunc(func(ctx context.Context) (ClientConn, error) {
-		return dialer.Dial(ctx)
-	})
-
-	return NewClientConnPool(fn, opts...)
+	return config.NewDialer().Dial()
 }
 
 // ParseHostAndPort parses a host and port from a string given in the format:

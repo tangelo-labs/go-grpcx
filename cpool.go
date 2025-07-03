@@ -18,30 +18,31 @@ import (
 )
 
 // PoolOption is a function that modifies the pool options.
-type PoolOption func(*poolOptions)
+type PoolOption func(*PoolOptions)
 
 // PoolDialer is responsible for creating a new connection for the pool.
 type PoolDialer interface {
-	Dial(context.Context) (ClientConn, error)
+	Dial() (ClientConn, error)
 }
 
 // PoolDialerFunc is a function type that implements the PoolDialer interface.
-type PoolDialerFunc func(context.Context) (ClientConn, error)
+type PoolDialerFunc func() (ClientConn, error)
 
 // Dial implements the PoolDialer interface for PoolDialerFunc.
-func (p PoolDialerFunc) Dial(ctx context.Context) (ClientConn, error) {
-	return p(ctx)
+func (p PoolDialerFunc) Dial() (ClientConn, error) {
+	return p()
 }
 
-type poolOptions struct {
-	poolSize     int
-	dialTimeout  time.Duration
-	connLifetime time.Duration
-	jitter       time.Duration
+// PoolOptions holds the options for the connection pool.
+type PoolOptions struct {
+	poolSize        int
+	connLifetime    time.Duration
+	jitter          time.Duration
+	healthCheckFreq time.Duration
 }
 
 // computeConnLifeTime returns a randomized connection lifetime duration.
-func (o *poolOptions) computeConnLifetime() time.Duration {
+func (o *PoolOptions) computeConnLifetime() time.Duration {
 	if o.connLifetime <= 0 {
 		return 0
 	}
@@ -53,22 +54,15 @@ func (o *poolOptions) computeConnLifetime() time.Duration {
 
 // WithPoolSize sets the number of connections in the pool.
 func WithPoolSize(size int) PoolOption {
-	return func(o *poolOptions) {
+	return func(o *PoolOptions) {
 		o.poolSize = size
-	}
-}
-
-// WithPoolDialTimeout sets the timeout for dialing a new connection.
-func WithPoolDialTimeout(timeout time.Duration) PoolOption {
-	return func(o *poolOptions) {
-		o.dialTimeout = timeout
 	}
 }
 
 // WithPoolConnLifetime sets the lifetime of each connection in the pool.
 // Defaults to 0, which means connections will not be closed automatically.
 func WithPoolConnLifetime(lifetime time.Duration) PoolOption {
-	return func(o *poolOptions) {
+	return func(o *PoolOptions) {
 		o.connLifetime = lifetime
 	}
 }
@@ -79,8 +73,17 @@ func WithPoolConnLifetime(lifetime time.Duration) PoolOption {
 // This option has no effect if the connection lifetime is not set.
 // Defaults to 10 seconds.
 func WithPoolJitter(jitter time.Duration) PoolOption {
-	return func(o *poolOptions) {
+	return func(o *PoolOptions) {
 		o.jitter = jitter
+	}
+}
+
+// WithPoolHealthCheckFreq sets the frequency of health checks for the connections
+// in the pool. This is used to refresh connections that are not healthy.
+// Defaults to 1 minute.
+func WithPoolHealthCheckFreq(freq time.Duration) PoolOption {
+	return func(o *PoolOptions) {
+		o.healthCheckFreq = freq
 	}
 }
 
@@ -125,7 +128,7 @@ type ClientConn interface {
 }
 
 type connPoolRoundRobin struct {
-	opts   *poolOptions
+	opts   *PoolOptions
 	dialer PoolDialer
 
 	balancer *Balancer[*clientConn]
@@ -141,11 +144,11 @@ type connPoolRoundRobin struct {
 //
 // The pool size is determined by the WithPoolSize option.
 func NewClientConnPool(dialer PoolDialer, o ...PoolOption) (ClientConn, error) {
-	opts := &poolOptions{
-		poolSize:     10,
-		dialTimeout:  time.Minute,
-		connLifetime: 0,
-		jitter:       10 * time.Second,
+	opts := &PoolOptions{
+		poolSize:        10,
+		connLifetime:    0,
+		jitter:          10 * time.Second,
+		healthCheckFreq: time.Minute,
 	}
 
 	for _, opt := range o {
@@ -302,10 +305,7 @@ func (pool *connPoolRoundRobin) get() (*clientConn, error) {
 }
 
 func (pool *connPoolRoundRobin) refresh(conn *clientConn) error {
-	ctx, cancel := context.WithTimeout(context.Background(), pool.opts.dialTimeout)
-	defer cancel()
-
-	newCC, err := pool.dialer.Dial(ctx)
+	newCC, err := pool.dialer.Dial()
 	if err != nil {
 		return err
 	}
@@ -335,10 +335,7 @@ func (pool *connPoolRoundRobin) refresh(conn *clientConn) error {
 }
 
 func (pool *connPoolRoundRobin) dial() (*clientConn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), pool.opts.dialTimeout)
-	defer cancel()
-
-	conn, err := pool.dialer.Dial(ctx)
+	conn, err := pool.dialer.Dial()
 	if err != nil {
 		return nil, err
 	}
@@ -353,7 +350,7 @@ func (pool *connPoolRoundRobin) dial() (*clientConn, error) {
 }
 
 func (pool *connPoolRoundRobin) refresher() {
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(pool.opts.healthCheckFreq)
 
 	for {
 		select {

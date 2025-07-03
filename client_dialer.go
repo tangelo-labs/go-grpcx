@@ -1,15 +1,12 @@
 package grpcx
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
-	"log"
 
 	"github.com/tangelo-labs/go-grpcx/interception/headers"
 	"github.com/tangelo-labs/go-grpcx/interception/metadata"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
@@ -44,10 +41,22 @@ func (d *Dialer) WithStreamInterceptors(interceptors ...grpc.StreamClientInterce
 	return d
 }
 
-// Dial dials the backend using the given context and returns a *grpc.ClientConn
-// instance. Note that the context is only used to dial the connection, it is
-// not used to control the connection lifecycle.
-func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
+// Dial dials the backend and returns a ClientConn instance.
+// If the dialer was configured with a connection pool,
+// it will return a pooled connection instance.
+func (d *Dialer) Dial() (ClientConn, error) {
+	if len(d.cfg.PoolOptions) > 0 {
+		fn := PoolDialerFunc(func() (ClientConn, error) {
+			return d.dial()
+		})
+
+		return NewClientConnPool(fn, d.cfg.PoolOptions...)
+	}
+
+	return d.dial()
+}
+
+func (d *Dialer) dial() (*grpc.ClientConn, error) {
 	scheme := ""
 	if d.cfg.ResolverScheme != "" {
 		scheme = fmt.Sprintf("%s:///", d.cfg.ResolverScheme)
@@ -70,10 +79,6 @@ func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
 
 		cred := credentials.NewTLS(tlsCfg)
 		additionalOptions = append(additionalOptions, grpc.WithTransportCredentials(cred))
-	}
-
-	if d.cfg.Blocking || d.cfg.Timeout > 0 {
-		log.Printf("[WARN] gRPC Dialing using blocking or timeout  options is deprecated, see: https://github.com/grpc/grpc-go/blob/master/Documentation/anti-patterns.md#the-wrong-way-grpcdial")
 	}
 
 	if d.cfg.Authority != "" {
@@ -129,27 +134,5 @@ func (d *Dialer) Dial(ctx context.Context) (*grpc.ClientConn, error) {
 		additionalOptions = append(additionalOptions, grpc.WithChainStreamInterceptor(streamInterceptors...))
 	}
 
-	conn, err := grpc.NewClient(target, additionalOptions...)
-	if err != nil {
-		return nil, err
-	}
-
-	if d.cfg.Blocking {
-		if conn.GetState() == connectivity.Idle {
-			if d.cfg.Timeout > 0 {
-				c, cancel := context.WithTimeout(ctx, d.cfg.Timeout)
-				defer cancel()
-
-				ctx = c
-			}
-
-			conn.Connect()
-
-			if !conn.WaitForStateChange(ctx, connectivity.Ready) {
-				return nil, fmt.Errorf("failed to connect to `%s`", target)
-			}
-		}
-	}
-
-	return conn, nil
+	return grpc.NewClient(target, additionalOptions...)
 }

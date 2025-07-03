@@ -22,7 +22,7 @@ func TestNewClientConnPool_Basic(t *testing.T) {
 		On("Invoke", ctx, "/hello.world", nil, nil, mock.Anything).Return(nil)
 
 	pool, err := grpcx.NewClientConnPool(
-		grpcx.PoolDialerFunc(func(context.Context) (grpcx.ClientConn, error) {
+		grpcx.PoolDialerFunc(func() (grpcx.ClientConn, error) {
 			return cc, nil
 		}),
 	)
@@ -48,7 +48,7 @@ func TestNewClientConnPool_Reconnect(t *testing.T) {
 		On("Invoke", ctx, "/hello.world", nil, nil, mock.Anything).Return(nil)
 
 	mpd := &mockPoolDialer{}
-	mpd.On("Dial", mock.Anything).Return(cc, nil)
+	mpd.On("Dial").Return(cc, nil)
 
 	pool, err := grpcx.NewClientConnPool(mpd)
 
@@ -66,8 +66,8 @@ type mockPoolDialer struct {
 	grpcx.PoolDialer
 }
 
-func (m *mockPoolDialer) Dial(ctx context.Context) (grpcx.ClientConn, error) {
-	args := m.Called(ctx)
+func (m *mockPoolDialer) Dial() (grpcx.ClientConn, error) {
+	args := m.Called()
 
 	return args.Get(0).(grpcx.ClientConn), args.Error(1)
 }
