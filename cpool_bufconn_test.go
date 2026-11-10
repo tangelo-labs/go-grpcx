@@ -2,7 +2,6 @@ package grpcx_test
 
 import (
 	"context"
-	"google.golang.org/grpc/credentials/insecure"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -12,8 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tangelo-labs/go-grpcx"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -98,6 +101,64 @@ func TestClientConnPool_ConcurrentRPCsDuringRefreshNoRace(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// TestClientConnPool_RecoversAfterServerRestart runs the real gRPC connection
+// states (READY → IDLE/TRANSIENT_FAILURE → READY) through the pool: while
+// the server is down RPCs fail as Unavailable, never cancelled by the pool,
+// and once it is back a burst succeeds.
+func TestClientConnPool_RecoversAfterServerRestart(t *testing.T) {
+	var lis atomic.Pointer[bufconn.Listener]
+
+	start := func() *grpc.Server {
+		l := bufconn.Listen(1 << 20)
+		lis.Store(l)
+
+		gs := grpc.NewServer()
+		healthpb.RegisterHealthServer(gs, health.NewServer())
+
+		go func() { _ = gs.Serve(l) }()
+
+		t.Cleanup(gs.Stop)
+
+		return gs
+	}
+
+	gs := start()
+
+	cfg, err := grpcx.ParseClientConfig("grpc://bufnet:1?tls=false&resolver.scheme=passthrough&pool.size=4&pool.healthCheckFreq=10ms")
+	require.NoError(t, err)
+
+	pool, err := cfg.NewDialer().WithOptions(
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.Load().DialContext(ctx) }),
+		grpc.WithConnectParams(grpc.ConnectParams{
+			Backoff:           backoff.Config{BaseDelay: 10 * time.Millisecond, Multiplier: 1, MaxDelay: 10 * time.Millisecond},
+			MinConnectTimeout: 100 * time.Millisecond,
+		}),
+	).Dial()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pool.Close() })
+
+	require.Empty(t, burst(t, pool, 20))
+
+	gs.Stop()
+
+	var failed int
+
+	for deadline := time.Now().Add(200 * time.Millisecond); time.Now().Before(deadline); {
+		if err := check(pool); err != nil {
+			failed++
+
+			require.Equal(t, codes.Unavailable, status.Code(err), "RPC failed during the outage with: %v", err)
+		}
+	}
+
+	require.Positive(t, failed, "the outage was not observed")
+
+	start()
+
+	require.Eventually(t, func() bool { return check(pool) == nil }, 2*time.Second, 10*time.Millisecond)
+	require.Empty(t, burst(t, pool, 50), "RPCs failed after the server came back")
 }
 
 type bufconnServer struct {

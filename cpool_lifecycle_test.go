@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -150,21 +151,62 @@ func TestClientConnPool_DrainTimeoutClosesStuckConnection(t *testing.T) {
 }
 
 func TestClientConnPool_StreamKeepsConnectionOpenUntilItEnds(t *testing.T) {
-	tests := map[string]func(s grpc.ClientStream, cancel context.CancelFunc){
-		"recv error": func(s grpc.ClientStream, _ context.CancelFunc) { require.ErrorIs(t, s.RecvMsg(nil), io.EOF) },
-		"cancelled":  func(_ grpc.ClientStream, cancel context.CancelFunc) { cancel() },
+	boom := errors.New("boom")
+
+	tests := map[string]struct {
+		setup func(c *fakeConn)
+		end   func(t *testing.T, s grpc.ClientStream, cancel context.CancelFunc, c *fakeConn)
+	}{
+		"recv error": {
+			end: func(t *testing.T, s grpc.ClientStream, _ context.CancelFunc, _ *fakeConn) {
+				require.ErrorIs(t, s.RecvMsg(nil), io.EOF)
+			},
+		},
+		"cancelled": {
+			end: func(_ *testing.T, _ grpc.ClientStream, cancel context.CancelFunc, _ *fakeConn) { cancel() },
+		},
+		"header error": {
+			setup: func(c *fakeConn) { c.headerErr = boom },
+			end: func(t *testing.T, s grpc.ClientStream, _ context.CancelFunc, _ *fakeConn) {
+				_, err := s.Header()
+				require.ErrorIs(t, err, boom)
+			},
+		},
+		"send error": {
+			setup: func(c *fakeConn) { c.sendErr = boom },
+			end: func(t *testing.T, s grpc.ClientStream, _ context.CancelFunc, _ *fakeConn) {
+				require.ErrorIs(t, s.SendMsg(nil), boom)
+			},
+		},
+		// io.EOF from SendMsg means the server ended the stream: the status
+		// is still to be read with RecvMsg, so the stream is not done yet.
+		"send EOF then recv": {
+			setup: func(c *fakeConn) { c.sendErr = io.EOF },
+			end: func(t *testing.T, s grpc.ClientStream, _ context.CancelFunc, c *fakeConn) {
+				require.ErrorIs(t, s.SendMsg(nil), io.EOF)
+
+				time.Sleep(20 * time.Millisecond)
+				require.False(t, c.isClosed(), "connection released on SendMsg io.EOF")
+
+				require.ErrorIs(t, s.RecvMsg(nil), io.EOF)
+			},
+		},
 	}
 
-	for name, end := range tests {
+	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			dialer := newFakeDialer(func(int) connectivity.State { return connectivity.Ready })
 			pool := newFakePool(t, dialer, grpcx.WithPoolSize(1))
 			first := dialer.conn(0)
 
+			if tt.setup != nil {
+				tt.setup(first)
+			}
+
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			stream, err := pool.NewStream(ctx, &grpc.StreamDesc{ServerStreams: true}, "/svc/Stream")
+			stream, err := pool.NewStream(ctx, &grpc.StreamDesc{ServerStreams: true, ClientStreams: true}, "/svc/Stream")
 			require.NoError(t, err)
 
 			first.state.Store(int32(connectivity.TransientFailure))
@@ -173,7 +215,7 @@ func TestClientConnPool_StreamKeepsConnectionOpenUntilItEnds(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 			require.False(t, first.isClosed(), "replaced connection closed with a stream open")
 
-			end(stream, cancel)
+			tt.end(t, stream, cancel, first)
 			require.Eventually(t, first.isClosed, time.Second, time.Millisecond)
 		})
 	}
@@ -325,6 +367,7 @@ func TestClientConnPool_GetState(t *testing.T) {
 		{[]connectivity.State{connectivity.Idle, connectivity.Connecting}, connectivity.Connecting},
 		{[]connectivity.State{connectivity.TransientFailure, connectivity.Idle}, connectivity.Idle},
 		{[]connectivity.State{connectivity.TransientFailure, connectivity.TransientFailure}, connectivity.TransientFailure},
+		{[]connectivity.State{connectivity.Shutdown, connectivity.Shutdown}, connectivity.Shutdown},
 	}
 
 	for _, tt := range tests {
@@ -354,13 +397,115 @@ func TestClientConnPool_InvalidOptions(t *testing.T) {
 
 func TestClientConnPool_DialErrorClosesDialedConnections(t *testing.T) {
 	dialer := newFakeDialer(func(int) connectivity.State { return connectivity.Ready })
-	dialer.failAt = 2
+	dialer.fail = func(n int) bool { return n == 2 }
 
 	_, err := grpcx.NewClientConnPool(dialer, grpcx.WithPoolSize(4))
 	require.Error(t, err)
 
 	for i, c := range dialer.all() {
 		require.True(t, c.isClosed(), "connection %d leaked after a failed pool creation", i)
+	}
+}
+
+func TestClientConnPool_RedialFailureKeepsConnectionAndRetries(t *testing.T) {
+	var down atomic.Bool
+
+	down.Store(true)
+
+	dialer := newFakeDialer(func(n int) connectivity.State {
+		if n == 0 {
+			return connectivity.TransientFailure
+		}
+
+		return connectivity.Ready
+	})
+	dialer.fail = func(n int) bool { return n > 0 && down.Load() }
+	pool := newFakePool(t, dialer, grpcx.WithPoolSize(1))
+
+	require.ErrorIs(t, invoke(pool), errDialFailed)
+
+	_, err := pool.NewStream(context.Background(), &grpc.StreamDesc{}, "/svc/Stream")
+	require.ErrorIs(t, err, errDialFailed)
+
+	first := dialer.conn(0)
+	require.Equal(t, 1, dialer.count())
+	require.False(t, first.isClosed(), "the slot connection must stay until a replacement is dialed")
+
+	down.Store(false)
+
+	require.NoError(t, invoke(pool), "the next RPC must retry the replacement")
+	require.EqualValues(t, 1, dialer.conn(1).calls.Load())
+	require.Eventually(t, first.isClosed, time.Second, time.Millisecond)
+}
+
+func TestClientConnPool_RefresherRetriesFailedRedial(t *testing.T) {
+	var down atomic.Bool
+
+	down.Store(true)
+
+	dialer := newFakeDialer(func(n int) connectivity.State {
+		if n == 0 {
+			return connectivity.TransientFailure
+		}
+
+		return connectivity.Ready
+	})
+	dialer.fail = func(n int) bool { return n > 0 && down.Load() }
+	newFakePool(t, dialer, grpcx.WithPoolSize(1), grpcx.WithPoolHealthCheckFreq(2*time.Millisecond))
+
+	// several ticks fail to dial a replacement.
+	time.Sleep(20 * time.Millisecond)
+
+	first := dialer.conn(0)
+	require.Equal(t, 1, dialer.count())
+	require.False(t, first.isClosed())
+
+	down.Store(false)
+
+	require.Eventually(t, func() bool { return dialer.count() == 2 && first.isClosed() }, time.Second, time.Millisecond)
+}
+
+func TestClientConnPool_RefreshRacingCloseDiscardsReplacement(t *testing.T) {
+	dialing := make(chan struct{})
+	release := make(chan struct{})
+
+	dialer := newFakeDialer(func(n int) connectivity.State {
+		if n == 0 {
+			return connectivity.TransientFailure
+		}
+
+		return connectivity.Ready
+	})
+	// the replacement dial is in progress when Close runs.
+	dialer.onDial = func(n int) {
+		if n == 1 {
+			close(dialing)
+			<-release
+		}
+	}
+
+	pool, err := grpcx.NewClientConnPool(dialer, grpcx.WithPoolSize(1))
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+
+	go func() { result <- invoke(pool) }()
+
+	select {
+	case <-dialing:
+	case <-time.After(time.Second):
+		t.Fatal("the RPC did not dial a replacement")
+	}
+
+	require.NoError(t, pool.Close())
+	close(release)
+
+	require.ErrorIs(t, <-result, grpcx.ErrClientConnPoolClosed)
+	require.Equal(t, 2, dialer.count())
+
+	for i, c := range dialer.all() {
+		require.True(t, c.isClosed(), "connection %d left open after Close", i)
+		require.EqualValues(t, 1, c.closes.Load(), "connection %d closed more than once", i)
 	}
 }
 
@@ -402,12 +547,16 @@ func runConcurrently(n int, fn func()) {
 	wg.Wait()
 }
 
+var errDialFailed = errors.New("dial failed")
+
 // fakeDialer creates fakeConns whose initial state is given by stateOf(n),
-// n being the dial number.
+// n being the dial number. fail, delay and onDial must be set before the
+// pool is created.
 type fakeDialer struct {
 	stateOf func(n int) connectivity.State
-	failAt  int           // dial number that fails, 0 = never
-	delay   time.Duration // duration of every RPC
+	fail    func(n int) bool // dial n fails with errDialFailed
+	onDial  func(n int)      // runs after dial n, before it returns
+	delay   time.Duration    // duration of every RPC
 
 	mu    sync.Mutex
 	conns []*fakeConn
@@ -419,15 +568,22 @@ func newFakeDialer(stateOf func(n int) connectivity.State) *fakeDialer {
 
 func (d *fakeDialer) Dial() (grpcx.ClientConn, error) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 
-	if d.failAt > 0 && len(d.conns) == d.failAt {
-		return nil, errors.New("dial failed")
+	n := len(d.conns)
+	if d.fail != nil && d.fail(n) {
+		d.mu.Unlock()
+
+		return nil, errDialFailed
 	}
 
 	c := &fakeConn{closing: make(chan struct{}), delay: d.delay}
-	c.state.Store(int32(d.stateOf(len(d.conns))))
+	c.state.Store(int32(d.stateOf(n)))
 	d.conns = append(d.conns, c)
+	d.mu.Unlock()
+
+	if d.onDial != nil {
+		d.onDial(n)
+	}
 
 	return c, nil
 }
@@ -471,7 +627,9 @@ type fakeConn struct {
 	state     atomic.Int32
 	delay     time.Duration
 	block     chan struct{}
-	streamErr error
+	streamErr error // returned by NewStream
+	headerErr error // returned by the stream Header
+	sendErr   error // returned by the stream SendMsg
 
 	calls           atomic.Int64
 	inflight        atomic.Int64
@@ -518,7 +676,7 @@ func (c *fakeConn) NewStream(context.Context, *grpc.StreamDesc, string, ...grpc.
 		return nil, c.streamErr
 	}
 
-	return &fakeStream{}, nil
+	return &fakeStream{headerErr: c.headerErr, sendErr: c.sendErr}, nil
 }
 
 func (c *fakeConn) Close() error {
@@ -543,6 +701,13 @@ func (c *fakeConn) isClosed() bool {
 
 type fakeStream struct {
 	grpc.ClientStream
+
+	headerErr error
+	sendErr   error
 }
+
+func (s *fakeStream) Header() (metadata.MD, error) { return nil, s.headerErr }
+
+func (s *fakeStream) SendMsg(any) error { return s.sendErr }
 
 func (*fakeStream) RecvMsg(any) error { return io.EOF }
