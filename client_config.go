@@ -289,6 +289,24 @@ var clientOptionsParsers = map[string]ccParserFunc{
 
 		return nil
 	},
+	"pool.drainTimeout": func(config *ClientConfig, timeout string, _ ...string) error {
+		if timeout == "" {
+			return fmt.Errorf("%w: pool.drainTimeout cannot be empty", ErrInvalidClientConnectionString)
+		}
+
+		drainTimeout, err := time.ParseDuration(timeout)
+		if err != nil {
+			return fmt.Errorf("%w: invalid pool.drainTimeout value, details = %w", ErrInvalidClientConnectionString, err)
+		}
+
+		if drainTimeout <= 0 {
+			return fmt.Errorf("%w: pool.drainTimeout must be greater than 0, got %s", ErrInvalidClientConnectionString, drainTimeout)
+		}
+
+		config.PoolOptions = append(config.PoolOptions, WithPoolDrainTimeout(drainTimeout))
+
+		return nil
+	},
 }
 
 // ClientConfig captures the configuration details for a gRPC client connection.
@@ -416,6 +434,14 @@ func (cfg ClientConfig) NewDialer() *Dialer {
 //     be in the form `key:value` (value may be empty, e.g. `no-value:`), to
 //     indicate more than one header simply repeat the option. Example:
 //     `headers=foo:bar&headers=bar:baz`.
+//   - pool.size (Default none, no pool): number of connections of a client side
+//     connection pool. See NewClientConnPool.
+//   - pool.connLifetime (Default 0, unlimited): lifetime of each pooled connection.
+//   - pool.jitter (Default 10s): random duration added to pool.connLifetime.
+//   - pool.healthCheckFreq (Default 1m): how often failed or expired pooled
+//     connections are replaced.
+//   - pool.drainTimeout (Default 1m): how long a replaced pooled connection is
+//     kept open for the RPCs and streams still running on it.
 //
 // Duration strings are a possibly signed sequence of decimal numbers, each with
 // optional fraction and a unit suffix, such as "300ms", "-1.5h" or "2h45m".

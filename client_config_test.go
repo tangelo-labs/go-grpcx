@@ -226,6 +226,22 @@ func TestParseClientConfig(t *testing.T) {
 				},
 			},
 		},
+		{
+			uri: "grpc://example.com:443?pool.size=10&pool.drainTimeout=30s",
+			want: grpcx.ClientConfig{
+				Host:     "example.com",
+				Port:     443,
+				Insecure: true,
+				PoolOptions: []grpcx.PoolOption{
+					grpcx.WithPoolSize(10),
+					grpcx.WithPoolDrainTimeout(30 * time.Second),
+				},
+			},
+		},
+		{
+			uri:     "grpc://example.com:443?pool.size=10&pool.drainTimeout=0s",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
