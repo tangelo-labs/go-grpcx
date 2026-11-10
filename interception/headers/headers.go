@@ -11,7 +11,7 @@ import (
 // the given list of headers into the context. Commonly used to inject
 // authentication headers in outgoing requests.
 func UnaryClientInterceptor(headers map[string]string) grpc.UnaryClientInterceptor {
-	kvs := make([]string, 0)
+	kvs := make([]string, 0, 2*len(headers))
 	for k, v := range headers {
 		kvs = append(kvs, k, v)
 	}
@@ -26,7 +26,7 @@ func UnaryClientInterceptor(headers map[string]string) grpc.UnaryClientIntercept
 // StreamClientInterceptor similar to UnaryClientInterceptor, but for streaming
 // requests.
 func StreamClientInterceptor(headers map[string]string) grpc.StreamClientInterceptor {
-	kvs := make([]string, 0)
+	kvs := make([]string, 0, 2*len(headers))
 	for k, v := range headers {
 		kvs = append(kvs, k, v)
 	}
