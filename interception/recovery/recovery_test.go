@@ -31,7 +31,7 @@ func TestUnaryServerInterceptor(t *testing.T) {
 	}
 
 	port := freeTCPAddr()
-	l, err := net.Listen("tcp", port.String())
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", port.String())
 	require.NoError(t, err)
 
 	server := grpc.NewServer(
